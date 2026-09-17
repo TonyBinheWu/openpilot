@@ -17,12 +17,17 @@ from openpilot.common.constants import CV
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
+from openpilot.sunnypilot.mads.helpers import MadsLongitudinalAssistMode, mads_follow_supported, read_longitudinal_assist_mode
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.selfdrive.controls.lib.blinker_pause_lateral import BlinkerPauseLateral
 from openpilot.sunnypilot.selfdrive.controls.lib.latcontrol_torque_v0 import LatControlTorque as LatControlTorqueV0
 from openpilot.selfdrive.controls.lib.desire_helper import CREEP_LANE_CHANGE_SPEED_MAX, creep_lane_change_context_safe
 
 CREEP_LANE_CHANGE_ACTIVE_SPEED_MAX = 30. * CV.KPH_TO_MS
+MADS_FOLLOW_ENGAGE_ACCEL = -0.05
+MADS_FOLLOW_RELEASE_ACCEL = -0.01
+LEAD_PLAN_SOURCES = (log.LongitudinalPlan.LongitudinalPlanSource.lead0,
+                     log.LongitudinalPlan.LongitudinalPlanSource.lead1)
 
 
 class ControlsExt(ModelStateBase):
@@ -32,6 +37,8 @@ class ControlsExt(ModelStateBase):
     self.params = params
     self._param_update_time: float = 0.0
     self.blinker_pause_lateral = BlinkerPauseLateral()
+    self.mads_longitudinal_assist_mode = read_longitudinal_assist_mode(params)
+    self._mads_follow_active = False
 
     cloudlog.info("controlsd_ext is waiting for CarParamsSP")
     self.CP_SP = messaging.log_from_bytes(params.get("CarParamsSP", block=True), custom.CarParamsSP)
@@ -59,6 +66,7 @@ class ControlsExt(ModelStateBase):
   def get_params_sp(self, sm: messaging.SubMaster) -> None:
     if time.monotonic() - self._param_update_time > PARAMS_UPDATE_PERIOD:
       self.blinker_pause_lateral.get_params()
+      self.mads_longitudinal_assist_mode = read_longitudinal_assist_mode(self.params)
 
       if self.CP.lateralTuning.which() == 'torque':
         self.lat_delay = get_lat_delay(self.params, sm["lateralDelay"].lateralDelay)
@@ -79,6 +87,34 @@ class ControlsExt(ModelStateBase):
 
     # MADS not available, use stock state to engage
     return bool(sm['selfdriveState'].active)
+
+  def get_mads_follow_active(self, sm: messaging.SubMaster, long_plan) -> bool:
+    """Return brake-only MADS follow state. Positive acceleration is never authorized here."""
+    CS = sm['carState']
+    mads = sm['selfdriveStateSP'].mads
+
+    eligible = (
+      self.mads_longitudinal_assist_mode == MadsLongitudinalAssistMode.FOLLOW and
+      mads_follow_supported(self.CP) and
+      mads.available and mads.active and
+      not sm['selfdriveState'].enabled and
+      sm.valid['radarState'] and sm.valid['longitudinalPlan'] and
+      sm['radarState'].leadOne.present and
+      long_plan.longitudinalPlanSource in LEAD_PLAN_SOURCES and
+      not CS.gasPressed and not CS.brakePressed and not CS.regenBraking
+    )
+
+    if not eligible:
+      self._mads_follow_active = False
+      return False
+
+    if self._mads_follow_active:
+      if not long_plan.shouldStop and long_plan.aTarget >= MADS_FOLLOW_RELEASE_ACCEL:
+        self._mads_follow_active = False
+    elif long_plan.shouldStop or long_plan.aTarget <= MADS_FOLLOW_ENGAGE_ACCEL:
+      self._mads_follow_active = True
+
+    return self._mads_follow_active
 
   @staticmethod
   def get_lead_data(_lead, src: log.RadarState.LeadData) -> None:
