@@ -143,7 +143,8 @@ class Controls(ControlsExt):
       # permit LongControl to request positive acceleration.
       pid_accel_limits = (pid_accel_limits[0], min(pid_accel_limits[1], 0.0))
 
-    accel_cmd = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits))
+    follow_should_stop = long_plan.shouldStop or (mads_follow_active and self.mads_follow_hold_active)
+    accel_cmd = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, follow_should_stop, pid_accel_limits))
     actuators.accel = min(accel_cmd, 0.0) if mads_follow_active else accel_cmd
 
     # Steering PID loop and lateral MPC
