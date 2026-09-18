@@ -171,10 +171,7 @@ class ControlsExt(ModelStateBase):
       self._mads_follow_active = False
       return False
 
-    if self._mads_follow_active:
-      if not long_plan.shouldStop and long_plan.aTarget >= MADS_FOLLOW_RELEASE_ACCEL:
-        self._mads_follow_active = False
-    elif long_plan.shouldStop or long_plan.aTarget <= MADS_FOLLOW_ENGAGE_ACCEL:
+    if not self._mads_follow_active and (long_plan.shouldStop or long_plan.aTarget <= MADS_FOLLOW_ENGAGE_ACCEL):
       self._mads_follow_active = True
 
     # Latch stopped-follow state before the normal release condition can drop
@@ -188,6 +185,9 @@ class ControlsExt(ModelStateBase):
       self._mads_follow_hold_track_id = int(lead.radarTrackId)
       self._mads_follow_depart_counter = 0
       return True
+
+    if self._mads_follow_active and not long_plan.shouldStop and long_plan.aTarget >= MADS_FOLLOW_RELEASE_ACCEL:
+      self._mads_follow_active = False
 
     return self._mads_follow_active
 
