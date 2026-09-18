@@ -81,7 +81,12 @@ def set_alternative_experience(CP: structs.CarParams, CP_SP: structs.CarParamsSP
       CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.MADS_PAUSE_LATERAL_ON_BRAKE
 
     if longitudinal_assist_mode == MadsLongitudinalAssistMode.FOLLOW and mads_follow_supported(CP):
-      CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.MADS_LONGITUDINAL_FOLLOW
+      # Keep card initialization fail-safe if an updater leaves opendbc_repo stale.
+      # With the matching opendbc submodule this resolves to 8192; on an old
+      # submodule it resolves to 0 instead of crashing before CarParams publishes.
+      follow_flag = getattr(ALTERNATIVE_EXPERIENCE, "MADS_LONGITUDINAL_FOLLOW", 0)
+      if follow_flag:
+        CP.alternativeExperience |= follow_flag
 
 
 def set_car_specific_params(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params):

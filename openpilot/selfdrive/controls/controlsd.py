@@ -117,8 +117,11 @@ class Controls(ControlsExt):
 
     CC.latActive = _lat_active and not CS.steerFaultTemporary and not CS.steerFaultPermanent and \
                    (not standstill or self.CP.steerAtStandstill)
-    CC.longActive = CC.enabled and not any(e.overrideLongitudinal for e in self.sm['onroadEvents']) and \
-                    (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
+    longitudinal_override = any(e.overrideLongitudinal for e in self.sm['onroadEvents'])
+    normal_long_active = CC.enabled and not longitudinal_override and \
+                         (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
+    mads_follow_active = self.get_mads_follow_active(self.sm, long_plan) and not longitudinal_override
+    CC.longActive = normal_long_active or mads_follow_active
 
     actuators = CC.actuators
     actuators.longControlState = self.LoC.long_control_state
@@ -135,7 +138,13 @@ class Controls(ControlsExt):
 
     # accel PID loop
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, self.CP_SP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
-    actuators.accel = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits))
+    if mads_follow_active:
+      # Follow Assist is brake-only. Keep the lower vehicle limit, but never
+      # permit LongControl to request positive acceleration.
+      pid_accel_limits = (pid_accel_limits[0], min(pid_accel_limits[1], 0.0))
+
+    accel_cmd = float(self.LoC.update(CC.longActive, CS, long_plan.aTarget, long_plan.shouldStop, pid_accel_limits))
+    actuators.accel = min(accel_cmd, 0.0) if mads_follow_active else accel_cmd
 
     # Steering PID loop and lateral MPC
     # Reset desired curvature to current to avoid violating the limits on engage
