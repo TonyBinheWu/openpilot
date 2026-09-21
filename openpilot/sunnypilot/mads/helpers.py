@@ -7,7 +7,6 @@ See the LICENSE.md file in the root directory for more details.
 
 from openpilot.common.params import Params
 from opendbc.car import structs
-from opendbc.car.hyundai.values import HyundaiFlags
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
 from opendbc.sunnypilot.car.hyundai.values import HyundaiFlagsSP, HyundaiSafetyFlagsSP
 from opendbc.sunnypilot.car.tesla.values import MadsScreenButtonType, TeslaFlagsSP
@@ -22,19 +21,6 @@ class MadsSteeringModeOnBrake:
   DISENGAGE = 2
 
 
-class MadsLongitudinalAssistMode:
-  OFF = 0
-  FOLLOW = 1
-  FULL = 2
-
-
-MADS_LONGITUDINAL_ASSIST_MODES = (
-  MadsLongitudinalAssistMode.OFF,
-  MadsLongitudinalAssistMode.FOLLOW,
-  MadsLongitudinalAssistMode.FULL,
-)
-
-
 def get_mads_limited_brands(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params) -> bool:
   if CP.brand == 'rivian':
     return True
@@ -47,11 +33,6 @@ def get_mads_limited_brands(CP: structs.CarParams, CP_SP: structs.CarParamsSP, p
   return False
 
 
-def mads_follow_supported(CP: structs.CarParams) -> bool:
-  """Brake-only MADS follow is initially scoped to Hyundai/Kia/Genesis CAN-FD with OP longitudinal."""
-  return bool(CP.brand == "hyundai" and CP.flags & HyundaiFlags.CANFD and CP.openpilotLongitudinalControl)
-
-
 def read_steering_mode_param(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params):
   if get_mads_limited_brands(CP, CP_SP, params):
     return MadsSteeringModeOnBrake.DISENGAGE
@@ -59,18 +40,9 @@ def read_steering_mode_param(CP: structs.CarParams, CP_SP: structs.CarParamsSP, 
   return params.get("MadsSteeringMode", return_default=True)
 
 
-def read_longitudinal_assist_mode(params: Params) -> int:
-  try:
-    mode = int(params.get("MadsLongitudinalAssistMode", return_default=True))
-  except (TypeError, ValueError):
-    return MadsLongitudinalAssistMode.OFF
-  return mode if mode in MADS_LONGITUDINAL_ASSIST_MODES else MadsLongitudinalAssistMode.OFF
-
-
 def set_alternative_experience(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params):
   enabled = params.get_bool("Mads")
   steering_mode = read_steering_mode_param(CP, CP_SP, params)
-  longitudinal_assist_mode = read_longitudinal_assist_mode(params)
 
   if enabled:
     CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.ENABLE_MADS
@@ -79,15 +51,6 @@ def set_alternative_experience(CP: structs.CarParams, CP_SP: structs.CarParamsSP
       CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.MADS_DISENGAGE_LATERAL_ON_BRAKE
     elif steering_mode == MadsSteeringModeOnBrake.PAUSE:
       CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.MADS_PAUSE_LATERAL_ON_BRAKE
-
-    if longitudinal_assist_mode == MadsLongitudinalAssistMode.FOLLOW and mads_follow_supported(CP):
-      # Keep card initialization fail-safe if an updater leaves opendbc_repo stale.
-      # With the matching opendbc submodule this resolves to 8192; on an old
-      # submodule it resolves to 0 instead of crashing before CarParams publishes.
-      follow_flag = getattr(ALTERNATIVE_EXPERIENCE, "MADS_LONGITUDINAL_FOLLOW", 0)
-      if follow_flag:
-        CP.alternativeExperience |= follow_flag
-
 
 def set_car_specific_params(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params):
   if CP.brand == "hyundai":

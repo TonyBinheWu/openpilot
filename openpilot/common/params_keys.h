@@ -199,7 +199,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     // MADS params
     {"Mads", {PERSISTENT | BACKUP, BOOL, "1"}},
-    {"MadsLongitudinalAssistMode", {PERSISTENT | BACKUP, INT, "0"}},
     {"MadsMainCruiseAllowed", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"MadsSteeringMode", {PERSISTENT | BACKUP, INT, "0"}},
     {"MadsUnifiedEngagementMode", {PERSISTENT | BACKUP, BOOL, "1"}},

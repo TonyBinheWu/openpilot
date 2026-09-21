@@ -17,22 +17,12 @@ from openpilot.common.constants import CV
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
-from openpilot.sunnypilot.mads.helpers import MadsLongitudinalAssistMode, mads_follow_supported, read_longitudinal_assist_mode
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.selfdrive.controls.lib.blinker_pause_lateral import BlinkerPauseLateral
 from openpilot.sunnypilot.selfdrive.controls.lib.latcontrol_torque_v0 import LatControlTorque as LatControlTorqueV0
 from openpilot.selfdrive.controls.lib.desire_helper import CREEP_LANE_CHANGE_SPEED_MAX, creep_lane_change_context_safe
 
 CREEP_LANE_CHANGE_ACTIVE_SPEED_MAX = 30. * CV.KPH_TO_MS
-MADS_FOLLOW_ENGAGE_ACCEL = -0.05
-MADS_FOLLOW_RELEASE_ACCEL = -0.01
-MADS_FOLLOW_HOLD_EGO_SPEED = 0.10
-MADS_FOLLOW_LEAD_STOP_SPEED = 0.20
-MADS_FOLLOW_LEAD_DEPART_SPEED = 0.30
-MADS_FOLLOW_LEAD_DEPART_DISTANCE = 0.80
-MADS_FOLLOW_LEAD_DEPART_CONFIRM_FRAMES = 30
-LEAD_PLAN_SOURCES = (log.LongitudinalPlan.LongitudinalPlanSource.lead0,
-                     log.LongitudinalPlan.LongitudinalPlanSource.lead1)
 
 
 class ControlsExt(ModelStateBase):
@@ -42,12 +32,6 @@ class ControlsExt(ModelStateBase):
     self.params = params
     self._param_update_time: float = 0.0
     self.blinker_pause_lateral = BlinkerPauseLateral()
-    self.mads_longitudinal_assist_mode = read_longitudinal_assist_mode(params)
-    self._mads_follow_active = False
-    self._mads_follow_hold_active = False
-    self._mads_follow_hold_distance = 0.0
-    self._mads_follow_hold_track_id = -1
-    self._mads_follow_depart_counter = 0
 
     cloudlog.info("controlsd_ext is waiting for CarParamsSP")
     self.CP_SP = messaging.log_from_bytes(params.get("CarParamsSP", block=True), custom.CarParamsSP)
@@ -75,7 +59,6 @@ class ControlsExt(ModelStateBase):
   def get_params_sp(self, sm: messaging.SubMaster) -> None:
     if time.monotonic() - self._param_update_time > PARAMS_UPDATE_PERIOD:
       self.blinker_pause_lateral.get_params()
-      self.mads_longitudinal_assist_mode = read_longitudinal_assist_mode(self.params)
 
       if self.CP.lateralTuning.which() == 'torque':
         self.lat_delay = get_lat_delay(self.params, sm["lateralDelay"].lateralDelay)
@@ -96,100 +79,6 @@ class ControlsExt(ModelStateBase):
 
     # MADS not available, use stock state to engage
     return bool(sm['selfdriveState'].active)
-
-  def _reset_mads_follow(self) -> None:
-    self._mads_follow_active = False
-    self._mads_follow_hold_active = False
-    self._mads_follow_hold_distance = 0.0
-    self._mads_follow_hold_track_id = -1
-    self._mads_follow_depart_counter = 0
-
-  @property
-  def mads_follow_hold_active(self) -> bool:
-    return self._mads_follow_hold_active
-
-  def get_mads_follow_active(self, sm: messaging.SubMaster, long_plan) -> bool:
-    """Return brake-only MADS follow state, with a latched stop hold until the lead departs."""
-    CS = sm['carState']
-    mads = sm['selfdriveStateSP'].mads
-
-    base_enabled = (
-      self.mads_longitudinal_assist_mode == MadsLongitudinalAssistMode.FOLLOW and
-      mads_follow_supported(self.CP) and
-      mads.available and mads.active and
-      not sm['selfdriveState'].enabled
-    )
-
-    # Accelerator is an explicit driver takeover. MADS off / mode changes also
-    # release the hold immediately.
-    if not base_enabled or CS.gasPressed:
-      self._reset_mads_follow()
-      return False
-
-    radar_valid = bool(sm.valid['radarState'])
-    lead = sm['radarState'].leadOne
-    lead_present = radar_valid and lead.present
-
-    # Once Follow Assist has brought the car to a stop behind a stopped lead,
-    # keep longitudinal authority latched. Planner aTarget/source changes and a
-    # transient radar dropout must not release the brakes.
-    if self._mads_follow_hold_active:
-      if lead_present:
-        lead_track_id = int(lead.radarTrackId)
-        if self._mads_follow_hold_track_id >= 0 and lead_track_id >= 0 and lead_track_id != self._mads_follow_hold_track_id:
-          # A target switch is not proof that the original lead departed.
-          self._mads_follow_hold_track_id = lead_track_id
-          self._mads_follow_hold_distance = float(lead.dRel)
-          self._mads_follow_depart_counter = 0
-        else:
-          lead_moving = float(lead.vLead) >= MADS_FOLLOW_LEAD_DEPART_SPEED
-          distance_opening = (
-            self._mads_follow_hold_distance > 0.0 and
-            float(lead.dRel) - self._mads_follow_hold_distance >= MADS_FOLLOW_LEAD_DEPART_DISTANCE
-          )
-          self._mads_follow_depart_counter = self._mads_follow_depart_counter + 1 if (lead_moving or distance_opening) else 0
-
-          if self._mads_follow_depart_counter >= MADS_FOLLOW_LEAD_DEPART_CONFIRM_FRAMES:
-            self._reset_mads_follow()
-            return False
-      else:
-        # Loss of the lead is ambiguous at standstill. Stay held until the lead
-        # is positively seen departing, or the driver manually takes over.
-        self._mads_follow_depart_counter = 0
-
-      self._mads_follow_active = True
-      return True
-
-    eligible = (
-      sm.valid['longitudinalPlan'] and
-      lead_present and
-      long_plan.longitudinalPlanSource in LEAD_PLAN_SOURCES and
-      not CS.brakePressed and not CS.regenBraking
-    )
-
-    if not eligible:
-      self._mads_follow_active = False
-      return False
-
-    if not self._mads_follow_active and (long_plan.shouldStop or long_plan.aTarget <= MADS_FOLLOW_ENGAGE_ACCEL):
-      self._mads_follow_active = True
-
-    # Latch stopped-follow state before the normal release condition can drop
-    # longitudinal control. This keeps brake hold until the same/next lead is
-    # positively moving away.
-    ego_stopped = CS.standstill or abs(float(CS.vEgo)) <= MADS_FOLLOW_HOLD_EGO_SPEED
-    lead_stopped = abs(float(lead.vLead)) <= MADS_FOLLOW_LEAD_STOP_SPEED
-    if self._mads_follow_active and ego_stopped and lead_stopped:
-      self._mads_follow_hold_active = True
-      self._mads_follow_hold_distance = float(lead.dRel)
-      self._mads_follow_hold_track_id = int(lead.radarTrackId)
-      self._mads_follow_depart_counter = 0
-      return True
-
-    if self._mads_follow_active and not long_plan.shouldStop and long_plan.aTarget >= MADS_FOLLOW_RELEASE_ACCEL:
-      self._mads_follow_active = False
-
-    return self._mads_follow_active
 
   @staticmethod
   def get_lead_data(_lead, src: log.RadarState.LeadData) -> None:
