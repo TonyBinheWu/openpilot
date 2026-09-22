@@ -164,9 +164,18 @@ class UIState(UIStateSP):
       if len(panda_states) > 0:
         # Get panda type from first panda
         self.panda_type = panda_states[0].pandaType
-        # Check ignition status across all pandas
+        # Check ignition status across all pandas. Match hardwared's C4
+        # fallback so the MICI UI transitions onroad when a cuatro has a
+        # connected harness and active traffic on multiple CAN buses.
         if self.panda_type != log.PandaState.PandaType.unknown:
-          self.ignition = any(state.ignitionLine or state.ignitionCan for state in panda_states)
+          panda_ignition = any(state.ignitionLine or state.ignitionCan for state in panda_states)
+          cuatro_can_awake = any(
+            state.pandaType == log.PandaState.PandaType.cuatro
+            and state.harnessStatus != log.PandaState.HarnessStatus.notConnected
+            and sum(cs.totalRxCnt > 0 for cs in (state.canState0, state.canState1, state.canState2)) >= 2
+            for state in panda_states
+          )
+          self.ignition = panda_ignition or cuatro_can_awake
     elif not self.sm.alive["pandaStates"]:
       self.panda_type = log.PandaState.PandaType.unknown
 
