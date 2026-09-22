@@ -261,8 +261,24 @@ def hardware_thread(end_event, hw_queue) -> None:
 
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
-      # Set ignition based on any panda connected
-      onroad_conditions["ignition"] = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      # Set ignition based on any panda connected.
+      #
+      # comma four / cuatro fallback:
+      # Some C4 units can report a valid connected harness and active CAN traffic
+      # while the Panda ignition-line bit remains low. This leaves hardwared
+      # permanently offroad even though the car is awake. Only use CAN activity
+      # as a fallback on cuatro, with a connected harness, and require traffic on
+      # at least two CAN buses to avoid treating a single noisy/diagnostic bus as
+      # ignition. The normal Panda ignitionLine/ignitionCan signals remain the
+      # primary source on all hardware.
+      panda_ignition = any(ps.ignitionLine or ps.ignitionCan for ps in pandaStates if ps.pandaType != log.PandaState.PandaType.unknown)
+      cuatro_can_awake = any(
+        ps.pandaType == log.PandaState.PandaType.cuatro
+        and ps.harnessStatus != log.PandaState.HarnessStatus.notConnected
+        and sum(cs.totalRxCnt > 0 for cs in (ps.canState0, ps.canState1, ps.canState2)) >= 2
+        for ps in pandaStates
+      )
+      onroad_conditions["ignition"] = panda_ignition or cuatro_can_awake
 
       pandaState = pandaStates[0]
 
