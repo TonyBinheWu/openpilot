@@ -56,10 +56,9 @@ def build() -> None:
     # Build failed log errors
     error_s = b"\n".join(compile_output).decode('utf8', 'replace')
 
-    # The bootstrap wrapper has an independent screen for unbuilt UI failures.
+    # Show TextWindow
     spinner.close()
-    print(error_s, flush=True)
-    if not os.getenv("CI") and not os.getenv("HKG_BOOTSTRAP_CAPTURE"):
+    if not os.getenv("CI"):
       with TextWindow("openpilot failed to build\n \n" + error_s) as t:
         t.wait_for_exit()
     exit(1)
