@@ -1,0 +1,125 @@
+name: tonypilot-mici validation
+on:
+  push:
+    branches: [audit/tonypilot-mici-validation]
+    paths: [.github/workflows/tonypilot-mici-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install Python test deps
+        run: python3 -m pip install --disable-pip-version-check cffi numpy pycapnp
+      - name: Clone exact MICI target using installer alias
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --progress --depth=1 --branch tonypilot-mici https://github.com/TonyBinheWu/openpilot.git "$RUNNER_TEMP/tpm"
+          cd "$RUNNER_TEMP/tpm"
+          test "$(git rev-parse HEAD)" = c09144cc31b308ac0f7f1e6e40df41fa5a669691
+          test ! -e prebuilt
+          test -x launch_openpilot.sh
+          test -x launch_chffrplus.sh
+          test -x system/manager/build.py
+      - name: Parse modified Python
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tpm"
+          python3 - <<'PY'
+          import ast, pathlib
+          paths = [
+            pathlib.Path("sunnypilot/selfdrive/car/interfaces.py"),
+            pathlib.Path("selfdrive/ui/sunnypilot/layouts/settings/steering.py"),
+            pathlib.Path("selfdrive/ui/mici/layouts/settings/device.py"),
+            pathlib.Path("selfdrive/ui/mici/layouts/settings/settings.py"),
+            pathlib.Path("opendbc_repo/opendbc/sunnypilot/car/interfaces.py"),
+            pathlib.Path("opendbc_repo/opendbc/sunnypilot/car/hyundai/torque.py"),
+            pathlib.Path("opendbc_repo/opendbc/car/hyundai/values.py"),
+            pathlib.Path("opendbc_repo/opendbc/car/hyundai/carcontroller.py"),
+          ]
+          for p in paths:
+            ast.parse(p.read_bytes(), filename=str(p))
+            print("AST_OK", p)
+          PY
+      - name: Compile Panda safety C
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tpm"
+          PYTHONPATH="$PWD/opendbc_repo:$PWD" python3 - <<'PY'
+          from opendbc.safety.tests.libsafety import libsafety_py
+          print("LIBSAFETY_LOADED", bool(libsafety_py.libsafety))
+          PY
+      - name: Validate HKG controller constants and setup hook
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tpm"
+          PYTHONPATH="$PWD/opendbc_repo:$PWD" python3 - <<'PY'
+          from types import SimpleNamespace
+          from opendbc.car.hyundai.values import CarControllerParams, HyundaiFlags, HyundaiSafetyFlags
+          from opendbc.car.structs import CarParams
+          from opendbc.sunnypilot.car.hyundai.torque import configure_low_speed_torque, supports_low_speed_torque
+
+          dummy = SimpleNamespace(flags=int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_DYNAMIC_TORQUE), carFingerprint="dummy")
+          p = CarControllerParams(dummy)
+          assert p.STEER_MAX == 350, p.STEER_MAX
+          assert p.STEER_MAX_LOOKUP == ([9., 13., 17.], [350, 350, 270]), p.STEER_MAX_LOOKUP
+          print("CONTROLLER_CURVE_OK", p.STEER_MAX, p.STEER_MAX_LOOKUP)
+
+          class SafetyCfg:
+            def __init__(self):
+              self.safetyModel = CarParams.SafetyModel.hyundaiCanfd
+              self.safetyParam = 0
+
+          # Exercise reset semantics independently of platform eligibility.
+          cp = SimpleNamespace(
+            brand="hyundai",
+            carFingerprint="NOT_A_PLATFORM",
+            flags=int(HyundaiFlags.CANFD | HyundaiFlags.CANFD_DYNAMIC_TORQUE),
+            steerControlType=CarParams.SteerControlType.torque,
+            dashcamOnly=False,
+            safetyConfigs=[SafetyCfg()],
+          )
+          cp.safetyConfigs[-1].safetyParam |= int(HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE)
+          assert not supports_low_speed_torque(cp)
+          configure_low_speed_torque(cp, True)
+          assert not (cp.flags & int(HyundaiFlags.CANFD_DYNAMIC_TORQUE))
+          assert not (cp.safetyConfigs[-1].safetyParam & int(HyundaiSafetyFlags.CANFD_DYNAMIC_TORQUE))
+          print("INCOMPATIBLE_RESET_OK")
+          PY
+      - name: Validate C4 language selector and translations
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tpm"
+          python3 - <<'PY'
+          import json, pathlib
+          langs=json.loads(pathlib.Path("selfdrive/ui/translations/languages.json").read_text())
+          assert langs["中文（繁體）"] == "zh-CHT"
+          device=pathlib.Path("selfdrive/ui/mici/layouts/settings/device.py").read_text()
+          settings=pathlib.Path("selfdrive/ui/mici/layouts/settings/settings.py").read_text()
+          zh=pathlib.Path("selfdrive/ui/translations/app_zh-CHT.po").read_text()
+          assert "LanguageLayoutMici" in device and 'tr("Change Language")' in device
+          for key in ("Toggles","Network","Device","Developer","Firehose"):
+            assert f'tr("{key}")' in settings
+          for text in ("HKG 低速轉向扭力（實驗功能）","已辨識到相容的 HKG CAN-FD 車型。"):
+            assert text in zh
+          print("C4_ZH_OK")
+          PY
+      - name: Probe live MICI installer payload
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re, urllib.request
+          url='https://install.sunnypilot.ai/fork/TonyBinheWu/tonypilot-mici'
+          req=urllib.request.Request(url, headers={'User-Agent':'AGNOSSetup-19.7','X-openpilot-device-type':'mici'})
+          with urllib.request.urlopen(req, timeout=30) as r:
+            data=r.read(3000000)
+            print("HTTP",r.status,"SIZE",len(data),"TYPE",r.headers.get("Content-Type"))
+          assert data[:4] == b'\x7fELF'
+          strings=[x.decode(errors='replace') for x in re.findall(rb'[\x20-\x7e]{8,}',data)]
+          selected=[s for s in strings if 'TonyBinheWu' in s or 'tonypilot-mici' in s]
+          print("\n".join(selected[:20]))
+          assert any('TonyBinheWu/openpilot.git' in s for s in selected)
+          assert any('tonypilot-mici' in s for s in selected)
+          PY
