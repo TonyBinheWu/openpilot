@@ -1,0 +1,28 @@
+name: HKG updater zipapp audit
+on:
+  push:
+    branches: [fix/hkg-c4-boot-20260923]
+    paths: [.github/workflows/hkg-updater-zipapp-audit.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Read packaged updater entry points
+        run: |
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 --branch hkg-enhanced https://github.com/TonyBinheWu/sunnypilot.git "$RUNNER_TEMP/hkg"
+          cd "$RUNNER_TEMP/hkg"
+          git lfs pull --include='openpilot/common/hardware/comma/updater'
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('openpilot/common/hardware/comma/updater') as z:
+            print('ZIP_CRC_CHECK',z.testzip(),'FILES',len(z.namelist()))
+            for p in ['__main__.py','openpilot/__init__.py','openpilot/system/ui/updater.py','openpilot/system/hardware/__init__.py','openpilot/system/ui/mici_updater.py']:
+              print('\nFILE',p)
+              try: data=z.read(p).decode()
+              except KeyError:
+                print('ABSENT');continue
+              print(data[:18000])
+          PY
