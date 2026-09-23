@@ -1,19 +1,21 @@
-# C4 已知可運作版本與 AGNOS 19.8 對照試驗
+# AGNOS 19.8 與相依項整合紀錄
 
-此分支從 `hkg-enhanced` 的恢復提交 `bea66e6f519dd5f57130603f499b28b6c03782a6` 建立；該提交的程式樹與使用者回報可正常運作的 `5fac01c9612befe6a8c8107d68208c36d6fccb19` 完全相同。
+`hkg-enhanced` 已於 2026-09-23 從已知可運作的 `5fac01c9612befe6a8c8107d68208c36d6fccb19` 程式樹更新至 AGNOS 19.8 與下列相依項。升級前版本保存在 `backup/hkg-enhanced-agnos19-7-before-deps-20260923`。
 
-## 唯一執行程式變更
+## 版本
 
-- `launch_env.sh`：AGNOS_VERSION 19.7 → 19.8。
-- `openpilot/common/hardware/comma/agnos.json`：採用 commaai/openpilot `f00d226d39e3900b6628f158c2c93738d67c9b18` 的官方 19.8 manifest。boot 與 system 映像及雜湊更新；另五個分割區未變。
-- 既有 manifest 符號連結、updater、Panda、opendbc、模型、UI、自訂車控及 launcher 均沿用 5fac01c 的程式樹。
+- AGNOS：19.8；manifest 採用 commaai/openpilot `f00d226d39e3900b6628f158c2c93738d67c9b18` 官方版。相較 19.7，boot/system 映像變更，其餘五個分割區未變。
+- `tinygrad_repo`：sunnypilot/tinygrad `fe5d3169ba4f41d0947ad174925f413cbea9d056`。
+- `rednose_repo`：commaai/rednose `8671c17c3a4cdc4be5df07a068039e2da5b94eaa`；相較前版僅新增 `.gitattributes`。
+- `teleoprtc_repo`：commaai/teleoprtc `1aa8fc433bef1519a95c0700c96258c3be6dfb34`，原本已是最新。
+- `panda`：sunnypilot/panda `74a0adced421e8b7acd728d0f9988ce225423f13`，原本已是最新。
 
-舊備份與 5fac01c 都使用 19.7，所以不能把 19.8 視為已證實的 C4 卡 Logo 修復。原先從 `e41b3de` 建立的 19.8 候選混合了新的啟動診斷改動，本分支將兩者分開。
+新版 tinygrad 移除 `Buffer.uop_refcount` 建構子位置參數；既有駕駛模型的 pickle 仍含此欄位。`openpilot/sunnypilot/modeld_v2/helpers.py` 只在載入舊 `Buffer` 物件時移除該參數，以免整數被誤當 `base`。HKG 車控、opendbc、模型選擇、介面、繁體中文及其他自訂檔案未替換。
 
-## 測試順序
+## 驗證範圍
 
-1. 在停車、穩定供電與網路的環境，先安裝正式 `hkg-enhanced`（現在與 5fac01c 程式樹一致），確認 C4 能否再次進入 UI，記錄裝置原本的 `/VERSION`、commit 與安裝畫面。
-2. 若正常，再試此 19.8 分支，記錄 AGNOS 刷寫、重開、編譯與 UI 狀態。若第一步已失敗，代表問題不能單靠回復程式樹解釋，應先保留安裝器/系統日誌。
-3. C4 通過後才於 C3X 驗證；最後才考慮將 19.8 合併至正式分支。
+- [90 個既有模型的載入相容性測試](https://github.com/TonyBinheWu/sunnypilot/actions/runs/35880979389)：全部通過。這驗證模型檔能反序列化，不代表裝置上完成推論或達成即時幀率。
+- [一般 CI](https://github.com/TonyBinheWu/sunnypilot/actions/runs/35880979517)：build release、macOS build、process replay、UI report 通過。單元測試共 1,536 通過、46 跳過、1 預期失敗；另有 1 個既有的 `test_corner_radar_layout` 因 CI 環境未安裝 `pytest` 而在收集階段失敗。靜態分析仍有原分支既有的型別錯誤。不能把整套 CI 稱為全部通過。
+- Git 差異只包含本文件、`launch_env.sh`、AGNOS manifest、模型載入 helper、rednose 與 tinygrad gitlink。
 
-此版本尚未經 C4/C3X 實機刷寫、完整編譯、相機、模型或車上驗證。從 19.8 回到 19.7 可能再次觸發 OS 刷寫，不能把切換 Git 分支當作安全的 OS 回退。
+尚未取得 C3X／C4 實機刷寫、完整裝置編譯、Chestnut 推論效能、相機、Panda 或實車驗證。首次在裝置啟動新分支可能觸發 AGNOS 刷寫；測試請在停車、穩定供電與網路時進行，先確認正常進入 UI、模型幀率與系統告警，再考慮道路使用。回到備份分支會要求 AGNOS 19.7，可能再次觸發系統刷寫；Git 回退不等於無風險的 OS 回退。
