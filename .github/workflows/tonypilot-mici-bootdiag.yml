@@ -1,0 +1,54 @@
+name: tonypilot-mici boot diagnostics validation
+on:
+  push:
+    branches: [audit/tonypilot-mici-bootdiag]
+    paths: [.github/workflows/tonypilot-mici-bootdiag.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Clone exact branch through C4 alias
+        run: |
+          set -euxo pipefail
+          git clone --depth=1 --branch tonypilot-mici https://github.com/TonyBinheWu/openpilot.git "$RUNNER_TEMP/tpm"
+          cd "$RUNNER_TEMP/tpm"
+          test "$(git rev-parse HEAD)" = 5aa2ce3d8141bb1b60272c11e10c1d0a7885dae5
+          test -f openpilot/system/manager/boot_diagnostics.py
+      - name: Validate shell and Python syntax
+        run: |
+          cd "$RUNNER_TEMP/tpm"
+          bash -n launch_openpilot.sh launch_chffrplus.sh launch_env.sh
+          python3 -m py_compile openpilot/system/manager/boot_diagnostics.py
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path("launch_chffrplus.sh").read_text()
+          required=[
+            'boot_stage "AGNOS initialization"',
+            'boot_stage "sunnypilot compilation"',
+            'boot_stage "manager startup"',
+            'boot_error "$rc" "manager exited unexpectedly"',
+            'boot_diagnostics.py',
+            '/tmp/tonypilot_boot.log',
+          ]
+          for x in required:
+            assert x in s, x
+          print("BOOT_DIAGNOSTICS_HOOKS_OK")
+          PY
+      - name: Probe live C4 installer
+        run: |
+          python3 - <<'PY'
+          import re,urllib.request
+          u='https://install.sunnypilot.ai/fork/TonyBinheWu/tonypilot-mici'
+          req=urllib.request.Request(u,headers={'User-Agent':'AGNOSSetup-19.7','X-openpilot-device-type':'mici'})
+          with urllib.request.urlopen(req,timeout=30) as r:
+            data=r.read(3000000)
+            print("HTTP",r.status,"SIZE",len(data),r.headers.get("Content-Type"))
+          assert data[:4] == b'\x7fELF'
+          strings=[x.decode(errors='replace') for x in re.findall(rb'[\x20-\x7e]{8,}',data)]
+          assert any('TonyBinheWu/openpilot.git' in x for x in strings)
+          assert any('tonypilot-mici' in x for x in strings)
+          print("LIVE_MICI_INSTALLER_OK")
+          PY
