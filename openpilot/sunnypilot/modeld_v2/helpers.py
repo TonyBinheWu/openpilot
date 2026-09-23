@@ -54,13 +54,14 @@ def _dynamic_factory(real_class):
   if isinstance(real_class, type) and issubclass(real_class, enum.Enum):
     return _enum_factory(real_class)
 
+  # Inspect once per class, not once per weight buffer in a model artifact.
+  legacy_buffer_layout = (real_class.__module__ == "tinygrad.device" and real_class.__name__ == "Buffer"
+                          and "uop_refcount" not in inspect.signature(real_class).parameters)
+
   def factory(*args, **kwargs):
-    # Legacy driving model artifacts serialized Buffer.uop_refcount as the
-    # seventh positional argument. Current tinygrad removed that parameter:
-    # without translating it, the integer is interpreted as Buffer.base.
-    if (real_class.__module__ == "tinygrad.device" and real_class.__name__ == "Buffer"
-        and len(args) >= 7 and isinstance(args[6], int)
-        and "uop_refcount" not in inspect.signature(real_class).parameters):
+    # Old artifacts serialized Buffer.uop_refcount at position seven. Current
+    # tinygrad removed it and would interpret the integer as Buffer.base.
+    if legacy_buffer_layout and len(args) >= 7 and isinstance(args[6], int):
       args = (*args[:6], *args[7:])
     try:
       return real_class(*args, **kwargs)
