@@ -1,0 +1,29 @@
+name: tonypilot C4 installer headers
+on:
+  push:
+    branches: [audit/tonypilot-install-20260923]
+    paths: [.github/workflows/tonypilot-c4-header-audit.yml]
+permissions:
+  contents: read
+jobs:
+  headers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Compare C4 and C3X installer payloads without executing binaries
+        run: |
+          python3 - <<'PY'
+          import hashlib, re, urllib.request
+          for path, device in [('fork/TonyBinheWu/tonypilot','mici'), ('fork/TonyBinheWu/hkg-enhanced','mici'), ('release-mici','mici'), ('fork/TonyBinheWu/tonypilot','tizi')]:
+            url='https://install.sunnypilot.ai/'+path
+            request=urllib.request.Request(url,headers={'User-Agent':'AGNOSSetup-19.7','X-openpilot-device-type':device})
+            print('PROBE',path,device,flush=True)
+            with urllib.request.urlopen(request,timeout=25) as response:
+              data=response.read(20*1024*1024+1)
+              print('HTTP',response.status,'URL',response.url,'TYPE',response.headers.get('Content-Type'),flush=True)
+            assert data[:4]==b'\x7fELF' and len(data)<=20*1024*1024
+            print('SIZE',len(data),'SHA256',hashlib.sha256(data).hexdigest(),flush=True)
+            for line in re.findall(rb'[\x20-\x7e\n\t\r]{12,}',data):
+              if any(key in line.lower() for key in [b'github.com/tony',b'github.com/sunnypilot',b'git clone',b'git reset',b'git checkout',b'continue.sh',b'launch_openpilot',b'/data/tmppilot',b'lfs',b'git finished']):
+                print('STRING',line.decode()[:3000],flush=True)
+          PY
