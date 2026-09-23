@@ -17,7 +17,6 @@ jobs:
           cd source
           git rev-parse HEAD
           cat launch_env.sh
-          git ls-files -s launch_openpilot.sh launch_chffrplus.sh openpilot/common/hardware/comma/updater
       - name: Check MICI installer and AGNOS download endpoints
         run: |
           cd source
@@ -38,24 +37,32 @@ jobs:
               req=urllib.request.Request(p['url'],headers={'Range':'bytes=0-63'})
               with urllib.request.urlopen(req,timeout=20) as r:
                 head=r.read(64)
-                return {'partition':p['name'],'status':r.status,'magic':head[:6].hex(),'xz':head.startswith(bytes.fromhex('fd377a585a00')),'type':r.headers.get('Content-Type')}
+                return {'partition':p['name'],'status':r.status,'magic':head[:6].hex(),'xz':head.startswith(bytes.fromhex('fd377a585a00'))}
             except Exception as e:
               return {'partition':p['name'],'error':str(e)}
           with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             for result in pool.map(probe,manifest): print('AGNOS_ENDPOINT',json.dumps(result))
-          print('Endpoint probes do not execute or flash AGNOS.')
           PY
-      - name: Verify updater object and ELF dependencies
+      - name: Verify and inspect updater Python archive without execution
         run: |
           cd source
           timeout 180 git lfs pull --include='openpilot/common/hardware/comma/updater'
-          git lfs fsck --objects --include='openpilot/common/hardware/comma/updater' || true
-          p=openpilot/common/hardware/comma/updater
-          sha256sum "$p"
-          file "$p"
-          readelf -h "$p" | head -n 20
-          readelf -d "$p" | grep -E 'NEEDED|RPATH|RUNPATH' || true
-          readelf --version-info "$p" | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -n 5
+          python3 -u - <<'PY'
+          import hashlib, pathlib, zipfile
+          p=pathlib.Path('openpilot/common/hardware/comma/updater')
+          data=p.read_bytes()
+          expected='3a94ab8395f20d20a9d5a2a2bacca0694f072df8421cf13adca6250d28065bdc'
+          assert hashlib.sha256(data).hexdigest()==expected
+          print('UPDATER_HASH_OK',len(data),repr(data[:200]))
+          with zipfile.ZipFile(p) as z:
+            print('ZIP_FILES',len(z.namelist()))
+            assert z.testzip() is None
+            names=[n for n in z.namelist() if n in ('__main__.py','environment.json') or n.endswith(('/updater.py','/mici_updater.py','/lib/application.py','/hardware/comma/hardware.py'))]
+            for n in names:
+              content=z.read(n).decode(errors='replace')
+              print('---',n,'---')
+              print(content[:9000])
+          PY
       - name: Run bootstrap regression tests when present
         run: |
           cd source
