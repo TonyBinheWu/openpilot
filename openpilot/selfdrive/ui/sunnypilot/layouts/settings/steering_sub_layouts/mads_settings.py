@@ -113,6 +113,7 @@ class MadsSettingsLayout(Widget):
 
   def _update_toggles(self):
     self._update_steering_mode_description(self._steering_mode.action_item.get_selected_button())
+
     if self._mads_limited_settings():
       ui_state.params.remove("MadsMainCruiseAllowed")
       ui_state.params.put_bool("MadsUnifiedEngagementMode", True)

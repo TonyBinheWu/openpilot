@@ -345,8 +345,16 @@ class ModelRenderer(Widget, ModelRendererSP):
     self._blend_filter.update(int(allow_throttle))
 
     if ui_state.rainbow_path:
-      self.rainbow_path.draw_rainbow_path(self._rect, self._path)
-      return
+      if ui_state.rainbow_mode_style == 1:
+        if (ui_state.status in (UIStatus.ENGAGED, UIStatus.LAT_ONLY) and
+            self.blue_path.draw(self._rect, self._path, sm, ui_state.started_frame, self._map_to_screen, self._path_offset_z,
+                                local_coordinates=True)):
+          return
+      else:
+        self.blue_path.reset()
+        self.rainbow_path.draw_rainbow_path(self._rect, self._path)
+        return
+    self.blue_path.reset()
 
     path_pts = self._path.projected_points + np.array([self._rect.x, self._rect.y], dtype=np.float32)
 

@@ -12,7 +12,7 @@ from openpilot.selfdrive.ui.mici.widgets.pairing_dialog import PairingDialog
 from openpilot.selfdrive.ui.mici.onroad.cabin_camera_dialog import CabinCameraDialog
 from openpilot.selfdrive.ui.mici.layouts.onboarding import TrainingGuide, TermsPage
 from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos
-from openpilot.system.ui.lib.multilang import tr
+from openpilot.system.ui.lib.multilang import multilang, tr
 from openpilot.system.ui.widgets import Widget
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.system.ui.widgets.label import UnifiedLabel
@@ -156,6 +156,40 @@ class PairBigButton(BigButton):
     gui_app.push_widget(dlg)
 
 
+class LanguageBigButton(BigButton):
+  """Language option using Unifont so every native language name renders correctly."""
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._label.set_font_weight(FontWeight.UNIFONT)
+    self._sub_label.set_font_weight(FontWeight.UNIFONT)
+
+
+class LanguageLayoutMici(NavScroller):
+  def __init__(self, parent: "DeviceLayoutMici"):
+    super().__init__()
+    self._parent = parent
+
+    buttons = []
+    for language_name, language_code in multilang.languages.items():
+      btn = LanguageBigButton(language_name, "✓" if language_code == multilang.language else "")
+      btn.set_click_callback(lambda code=language_code: self._select_language(code))
+      buttons.append(btn)
+
+    self._scroller.add_widgets(buttons)
+
+  def _select_language(self, language_code: str):
+    if language_code == multilang.language:
+      gui_app.pop_widgets_to(self._parent)
+      return
+
+    multilang.change_language(language_code)
+    self._parent._language_btn.set_value(multilang.codes.get(language_code, language_code))
+
+    # MICI widgets cache translated labels at construction time. Reboot after
+    # switching so the complete C4 UI is rebuilt with the selected language.
+    ui_state.params.put_bool("DoReboot", True, block=True)
+
+
 class DeviceLayoutMici(NavScroller):
   def __init__(self):
     super().__init__()
@@ -200,6 +234,10 @@ class DeviceLayoutMici(NavScroller):
     terms_btn = BigButton("terms &\nconditions", "", gui_app.texture("icons_mici/settings/device/info.png", 64, 64))
     terms_btn.set_click_callback(lambda: gui_app.push_widget(ReviewTermsPage()))
 
+    self._language_btn = BigButton(tr("Change Language"), multilang.codes.get(multilang.language, multilang.language))
+    self._language_btn.set_click_callback(lambda: gui_app.push_widget(LanguageLayoutMici(self)))
+    self._language_btn.set_enabled(lambda: ui_state.is_offroad())
+
     self._scroller.add_widgets([
       DeviceInfoLayoutMici(),
       PairBigButton(),
@@ -207,6 +245,7 @@ class DeviceLayoutMici(NavScroller):
       cabin_cam_btn,
       terms_btn,
       regulatory_btn,
+      self._language_btn,
       reset_calibration_btn,
       reboot_btn,
       self._power_off_btn,

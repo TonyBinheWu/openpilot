@@ -25,6 +25,12 @@ logging.basicConfig(
 
 AT_PORT = "/dev/modem_at0"
 PPP_PORT = "/dev/modem_at1"
+CELLULAR_INTERFACE = "ppp0"
+TETHERING_INTERFACE = "wlan0"
+TETHERING_SUBNET = "192.168.43.0/24"
+CELLULAR_ROUTE_TABLE = "1000"
+CELLULAR_ROUTE_PRIORITY = "11000"
+TETHERING_ROUTE_PRIORITY = "11010"
 STATE_PATH = "/dev/shm/modem"
 AT_LOCK = "/dev/shm/modem.lock"  # shared with LPA
 AT_INIT = [
@@ -101,6 +107,7 @@ def _read_line(fd: int, timeout: float) -> bytes:
 
 
 class State(Enum):
+  DISABLED = "DISABLED"
   INITIALIZING = "INITIALIZING"
   SEARCHING = "SEARCHING"
   CONNECTING = "CONNECTING"
@@ -170,8 +177,13 @@ class PPPSession:
     self.cleanup_routes()
     cmds = [
       ["sudo", "ip", "route", "add", "default", "via", peer, "dev", "ppp0", "metric", "1000"],
-      ["sudo", "ip", "route", "add", "default", "via", peer, "dev", "ppp0", "table", "1000"],
-      ["sudo", "ip", "rule", "add", "from", ip, "table", "1000"],
+      ["sudo", "ip", "route", "add", "default", "via", peer, "dev", CELLULAR_INTERFACE, "table", CELLULAR_ROUTE_TABLE],
+      ["sudo", "ip", "rule", "add", "priority", CELLULAR_ROUTE_PRIORITY, "from", ip, "table", CELLULAR_ROUTE_TABLE],
+      # Forwarded hotspot packets keep their 192.168.43.x source until POSTROUTING.
+      # Route them through the PPP policy table explicitly instead of relying on
+      # whichever default route happens to be active in the main table.
+      ["sudo", "ip", "rule", "add", "priority", TETHERING_ROUTE_PRIORITY,
+       "from", TETHERING_SUBNET, "table", CELLULAR_ROUTE_TABLE],
     ]
     for cmd in cmds:
       r = subprocess.run(cmd, capture_output=True, text=True)
@@ -181,8 +193,67 @@ class PPPSession:
         self.kill()
         return False
     logging.info(f"route set up for {ip} via {peer}")
+    self.install_tethering_forwarding()
+    self.verify_tethering_route()
     self._peer = peer
     return True
+
+  @staticmethod
+  def verify_tethering_route() -> bool:
+    """Verify that a forwarded hotspot packet resolves to the cellular uplink."""
+    r = subprocess.run([
+      "sudo", "ip", "-4", "route", "get", "1.1.1.1", "from", "192.168.43.2",
+      "iif", TETHERING_INTERFACE,
+    ], capture_output=True, text=True)
+    route = r.stdout.strip()
+    if r.returncode != 0 or f"dev {CELLULAR_INTERFACE}" not in route:
+      logging.warning(f"tethering policy route verification failed: {route or r.stderr.strip()}")
+      return False
+    logging.info(f"tethering policy route verified: {route}")
+    return True
+
+  @staticmethod
+  def _iptables(table: str, arguments: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(["sudo", "iptables", "-w", "2", "-t", table, *arguments], capture_output=True, text=True)
+
+  @classmethod
+  def install_tethering_forwarding(cls):
+    """Install forwarding on the real cellular uplink when PPP becomes usable."""
+    result = subprocess.run(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"], capture_output=True, text=True)
+    if result.returncode != 0:
+      logging.warning(f"failed to enable IPv4 forwarding: {result.stderr.strip()}")
+
+    rules = (
+      ("filter", ["FORWARD", "-i", TETHERING_INTERFACE, "-o", CELLULAR_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("filter", ["FORWARD", "-i", CELLULAR_INTERFACE, "-o", TETHERING_INTERFACE, "-d", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("nat", ["POSTROUTING", "-s", TETHERING_SUBNET, "-o", CELLULAR_INTERFACE, "-j", "MASQUERADE"]),
+      ("mangle", ["FORWARD", "-i", TETHERING_INTERFACE, "-o", CELLULAR_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"]),
+    )
+    for table, rule in rules:
+      if cls._iptables(table, ["-C", *rule]).returncode == 0:
+        continue
+      operation = "-A" if table == "nat" else "-I"
+      added = cls._iptables(table, [operation, *rule])
+      if added.returncode != 0:
+        logging.warning(f"tethering rule install failed ({table} {' '.join(rule)}): {added.stderr.strip()}")
+
+  @classmethod
+  def cleanup_tethering_forwarding(cls):
+    rules = (
+      ("filter", ["FORWARD", "-i", TETHERING_INTERFACE, "-o", CELLULAR_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("filter", ["FORWARD", "-i", CELLULAR_INTERFACE, "-o", TETHERING_INTERFACE, "-d", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("nat", ["POSTROUTING", "-s", TETHERING_SUBNET, "-o", CELLULAR_INTERFACE, "-j", "MASQUERADE"]),
+      ("mangle", ["FORWARD", "-i", TETHERING_INTERFACE, "-o", CELLULAR_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"]),
+    )
+    for table, rule in rules:
+      while cls._iptables(table, ["-D", *rule]).returncode == 0:
+        pass
 
   def maybe_install_dns(self, dns_servers: list[str]) -> bool:
     """Register DNS servers with systemd-resolved; kill the session on failure to force a retry."""
@@ -201,11 +272,12 @@ class PPPSession:
   @staticmethod
   def cleanup_routes():
     subprocess.run(["sudo", "ip", "route", "del", "default", "dev", "ppp0"], capture_output=True)
-    subprocess.run(["sudo", "ip", "route", "flush", "table", "1000"], capture_output=True)
+    subprocess.run(["sudo", "ip", "route", "flush", "table", CELLULAR_ROUTE_TABLE], capture_output=True)
     # rules don't have a flush; delete until none remain
-    while subprocess.run(["sudo", "ip", "rule", "del", "table", "1000"], capture_output=True).returncode == 0:
+    while subprocess.run(["sudo", "ip", "rule", "del", "table", CELLULAR_ROUTE_TABLE], capture_output=True).returncode == 0:
       pass
     subprocess.run(["sudo", "resolvectl", "revert", "ppp0"], capture_output=True)
+    PPPSession.cleanup_tethering_forwarding()
 
 
 class Modem:
@@ -240,6 +312,30 @@ class Modem:
     if self.S["iccid"].startswith(WEBBING_ICCID_PREFIX):
       return True
     return self._read_param("GsmRoaming") == "1"
+
+  def _is_enabled(self) -> bool:
+    # Missing parameter means enabled for compatibility with existing installs.
+    return self._read_param("GsmEnabled") != "0"
+
+  def _disable(self):
+    logging.info("disabling cellular modem")
+    self._ppp.kill()
+    self._ppp.cleanup_routes()
+    if os.path.exists(AT_PORT):
+      self._at("AT+CFUN=0")
+    self._publish_state(**INITIAL_STATE)
+
+  def _do_disabled(self):
+    if not self._is_enabled():
+      return State.DISABLED
+    if not os.path.exists(AT_PORT):
+      logging.info("waiting for modem port before enabling cellular modem")
+      return State.DISABLED
+    logging.info("enabling and resetting cellular modem")
+    # Full reset makes the EG25 re-enumerate and re-read the SIM, replacing a physical reseat.
+    self._at("AT+CFUN=1,1")
+    self._publish_state(**INITIAL_STATE)
+    return State.INITIALIZING
 
   def _publish_state(self, **kwargs):
     self.S.update(kwargs)
@@ -325,6 +421,11 @@ class Modem:
 
     if not self._init_at_channel():
       logging.warning("AT echo still on, retrying")
+      return State.INITIALIZING
+
+    if self._atv("AT+CFUN?", "+CFUN:") != "1":
+      logging.warning("modem radio is not fully enabled, requesting full functionality")
+      self._at("AT+CFUN=1")
       return State.INITIALIZING
 
     identity = self._read_identity()
@@ -431,7 +532,7 @@ class Modem:
     return False
 
   def _check_iccid(self, state):
-    if state in (State.INITIALIZING, State.DISCONNECTING) or not self.S["iccid"]:
+    if state in (State.DISABLED, State.INITIALIZING, State.DISCONNECTING) or not self.S["iccid"]:
       return
     iccid = (self._atv("AT+QCCID", "+QCCID:") or "").rstrip("F")
     if iccid and iccid != self.S["iccid"]:
@@ -582,6 +683,7 @@ class Modem:
     state = State.INITIALIZING
 
     handlers = {
+      State.DISABLED: self._do_disabled,
       State.INITIALIZING: self._do_initializing,
       State.SEARCHING: self._do_searching,
       State.CONNECTING: self._do_connecting,
@@ -591,9 +693,13 @@ class Modem:
 
     while self.running:
       try:
-        self._check_iccid(state)
         prev = state
-        state = handlers[state]()
+        if not self._is_enabled() and state != State.DISABLED:
+          self._disable()
+          state = State.DISABLED
+        else:
+          self._check_iccid(state)
+          state = handlers[state]()
         if state != prev:
           self._publish_state(state=state.value)
           logging.info(f"{prev.value} -> {state.value}")

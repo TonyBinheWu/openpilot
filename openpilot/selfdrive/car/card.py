@@ -18,6 +18,7 @@ from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
+from opendbc.sunnypilot.car.hyundai.factory_cluster import FACTORY_SIDE_DISPLAY_STATUS_PARAM
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
 from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
@@ -75,6 +76,7 @@ class Car:
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'radarTracks'] + ['carParamsSP', 'carStateSP'])
 
     self.can_rcv_cum_timeout_counter = 0
+    self.factory_cluster_display_status_last: str | None = None
 
     self.CC_prev = car.CarControl.new_message()
     self.CS_prev = car.CarState.new_message()
@@ -281,6 +283,10 @@ class Car:
       # send car controls over can
       now_nanos = self.can_log_mono_time if REPLAY else int(time.monotonic() * 1e9)
       self.last_actuators_output, can_sends = self.CI.apply(CC, convert_carControlSP(CC_SP), now_nanos)
+      factory_cluster_status = getattr(self.CI.CC, "factory_cluster_display_status", None)
+      if factory_cluster_status is not None and factory_cluster_status != self.factory_cluster_display_status_last:
+        self.factory_cluster_display_status_last = factory_cluster_status
+        self.params.put(FACTORY_SIDE_DISPLAY_STATUS_PARAM, factory_cluster_status)
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
 
       self.CC_prev = CC

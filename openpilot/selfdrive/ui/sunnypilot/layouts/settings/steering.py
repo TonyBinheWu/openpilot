@@ -126,7 +126,12 @@ class SteeringLayout(Widget):
 
   @staticmethod
   def _hkg_low_speed_torque_description():
-    description = tr("Increase low-speed steering assistance. Default: off. Change only offroad; applies next drive. Requires vehicle validation.")
+    description = tr(
+      "Uses the 2022 HKG low-speed profile: torque stays at 384 with 10/10 steering rates through 39.6 km/h, " +
+      "then blends to 350 and the normal 2/3 rates by 46.8 km/h. Torque tapers to 270 by 61.2 km/h and remains " +
+      "270 at higher speeds. It also enables one automatic lane change from a single blinker request at 0-5 km/h. " +
+      "Default: off. Change only offroad; applies next drive. Requires vehicle validation."
+    )
     if ui_state.CP is None:
       status = tr("Start the vehicle to check vehicle compatibility.")
     elif not supports_low_speed_torque(ui_state.CP):

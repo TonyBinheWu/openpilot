@@ -31,10 +31,11 @@ AUTO_LANE_CHANGE_TIMER = {
 }
 
 ONE_SECOND_DELAY = -1
+CREEP_LANE_CHANGE_DELAY = 0.5
 
 
 class AutoLaneChangeController:
-  def __init__(self, desire_helper):
+  def __init__(self, desire_helper, creep_lane_change_enabled: bool = False):
     self.DH = desire_helper
     self.params = Params()
 
@@ -44,6 +45,7 @@ class AutoLaneChangeController:
 
     self.lane_change_set_timer = self.params.get("AutoLaneChangeTimer", return_default=True)
     self.lane_change_bsm_delay = False
+    self.creep_lane_change_enabled = creep_lane_change_enabled
 
     self.prev_brake_pressed = False
     self.auto_lane_change_allowed = False
@@ -68,25 +70,28 @@ class AutoLaneChangeController:
       self.read_params()
     self.param_read_counter += 1
 
-  def update_lane_change_timers(self, blindspot_detected: bool) -> None:
-    self.lane_change_delay = AUTO_LANE_CHANGE_TIMER.get(self.lane_change_set_timer,
-                                                        AUTO_LANE_CHANGE_TIMER[AutoLaneChangeMode.NUDGE])
+  def update_lane_change_timers(self, blindspot_detected: bool, creep_lane_change: bool = False) -> None:
+    self.lane_change_delay = CREEP_LANE_CHANGE_DELAY if creep_lane_change else \
+      AUTO_LANE_CHANGE_TIMER.get(self.lane_change_set_timer, AUTO_LANE_CHANGE_TIMER[AutoLaneChangeMode.NUDGE])
 
     self.lane_change_wait_timer += DT_MDL
 
-    if self.lane_change_bsm_delay and blindspot_detected and self.lane_change_delay > 0:
+    if creep_lane_change and blindspot_detected:
+      self.lane_change_wait_timer = 0.0
+
+    if not creep_lane_change and self.lane_change_bsm_delay and blindspot_detected and self.lane_change_delay > 0:
       if self.lane_change_delay == AUTO_LANE_CHANGE_TIMER[AutoLaneChangeMode.NUDGELESS]:
         self.lane_change_wait_timer = ONE_SECOND_DELAY
       else:
         self.lane_change_wait_timer = self.lane_change_delay + ONE_SECOND_DELAY
 
-  def update_allowed(self) -> bool:
+  def update_allowed(self, creep_lane_change: bool = False) -> bool:
     # Auto lane change allowed if:
     # 1. A valid delay is set (non-zero)
     # 2. Brake wasn't previously pressed
     # 3. We've waited long enough
 
-    if self.lane_change_set_timer in (AutoLaneChangeMode.OFF, AutoLaneChangeMode.NUDGE):
+    if not creep_lane_change and self.lane_change_set_timer in (AutoLaneChangeMode.OFF, AutoLaneChangeMode.NUDGE):
       return False
 
     if self.prev_brake_pressed:
@@ -97,13 +102,13 @@ class AutoLaneChangeController:
 
     return bool(self.lane_change_wait_timer > self.lane_change_delay)
 
-  def update_lane_change(self, blindspot_detected: bool, brake_pressed: bool) -> None:
+  def update_lane_change(self, blindspot_detected: bool, brake_pressed: bool, creep_lane_change: bool = False) -> None:
     if brake_pressed and not self.prev_brake_pressed:
       self.prev_brake_pressed = brake_pressed
 
-    self.update_lane_change_timers(blindspot_detected)
+    self.update_lane_change_timers(blindspot_detected, creep_lane_change)
 
-    self.auto_lane_change_allowed = self.update_allowed()
+    self.auto_lane_change_allowed = self.update_allowed(creep_lane_change)
 
   def update_state(self):
     if self.DH.lane_change_state == log.LaneChangeState.laneChangeStarting:

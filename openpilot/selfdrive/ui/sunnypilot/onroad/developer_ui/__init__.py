@@ -8,6 +8,7 @@ from enum import IntEnum
 
 import pyray as rl
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.selfdrive.ui.sunnypilot.onroad.torque_debug import TorqueDebugState
 from openpilot.selfdrive.ui.sunnypilot.onroad.developer_ui.elements import (
   UiElement, RelDistElement, RelSpeedElement, SteeringAngleElement,
   DesiredLateralAccelElement, ActualLateralAccelElement, DesiredSteeringAngleElement,
@@ -38,6 +39,7 @@ class DeveloperUiRenderer(Widget):
     self._font_bold: rl.Font = gui_app.font(FontWeight.BOLD)
     self._font_semi_bold: rl.Font = gui_app.font(FontWeight.SEMI_BOLD)
     self.dev_ui_mode = DeveloperUiState.OFF
+    self.torque_debug = TorqueDebugState()
 
     self.rel_dist_elem = RelDistElement()
     self.rel_speed_elem = RelSpeedElement()
@@ -56,9 +58,11 @@ class DeveloperUiRenderer(Widget):
 
   def _update_state(self) -> None:
     self.dev_ui_mode = ui_state.developer_ui
+    self.torque_debug.update(ui_state.sm, ui_state.started_frame,
+                             ui_state.started and self.dev_ui_mode in (DeveloperUiState.BOTTOM, DeveloperUiState.RIGHT, DeveloperUiState.BOTH))
 
   def _render(self, rect: rl.Rectangle) -> None:
-    if self.dev_ui_mode == DeveloperUiState.OFF:
+    if self.dev_ui_mode not in (DeveloperUiState.BOTTOM, DeveloperUiState.RIGHT, DeveloperUiState.BOTH):
       return
 
     sm = ui_state.sm
@@ -72,6 +76,43 @@ class DeveloperUiRenderer(Widget):
     elif self.dev_ui_mode == DeveloperUiState.BOTH:
       self._draw_right_dev_ui(rect)
       self._draw_bottom_dev_ui(rect)
+
+    self._draw_torque_debug(rect)
+    self._draw_vehicle_diagnostics(rect)
+
+  def _draw_vehicle_diagnostics(self, rect: rl.Rectangle) -> None:
+    if rect.width <= 0 or rect.height <= 0:
+      return
+    scale = min(1.0, rect.width / 1920, rect.height / 1080)
+    # Keep the lower-left driver-monitoring indicator unobstructed.
+    x, y = rect.x + 270 * scale, rect.y + 650 * scale
+    width = 700 * scale
+    lines = ui_state.developer_diagnostics.lines()
+    rl.draw_rectangle_rounded(rl.Rectangle(x, y, width, (16 + 27 * len(lines)) * scale),
+                               0.1, 8, rl.Color(0, 0, 0, 170))
+    for i, line in enumerate(lines):
+      font_size = 23 * scale
+      measured = measure_text_cached(self._font_semi_bold, line, font_size, 0).x
+      font_size *= min(1.0, (width - 24 * scale) / max(1.0, measured))
+      color = rl.ORANGE if line.startswith('*') else rl.WHITE
+      rl.draw_text_ex(self._font_semi_bold, line, rl.Vector2(x + 12 * scale, y + (8 + i * 27) * scale), font_size, 0, color)
+
+  def _draw_torque_debug(self, rect: rl.Rectangle) -> None:
+    # Left of the road, below the speed-limit ahead sign. Alerts render above HUD.
+    if rect.width <= 0 or rect.height <= 0:
+      return
+    scale = min(1.0, rect.width / 1920, rect.height / 1080)
+    x, y = rect.x + 30 * scale, rect.y + 470 * scale
+    width, height = min(700 * scale, rect.width - 60 * scale), 170 * scale
+    rl.draw_rectangle_rounded(rl.Rectangle(x, y, width, height), 0.1, 8, rl.Color(0, 0, 0, 150))
+    lines = self.torque_debug.lines(ui_state.is_metric)
+    for i, line in enumerate(lines):
+      font_size = 28 * scale
+      measured = measure_text_cached(self._font_semi_bold, line, font_size, 0).x
+      font_size *= min(1.0, (width - 24 * scale) / max(1.0, measured))
+      color = rl.ORANGE if i == 2 and self.torque_debug.last_saturation is not None else rl.WHITE
+      rl.draw_text_ex(self._font_semi_bold, line, rl.Vector2(x + 12 * scale, y + (12 + i * 38) * scale),
+                      font_size, 0, color)
 
   def _draw_right_dev_ui(self, rect: rl.Rectangle) -> None:
     sm = ui_state.sm

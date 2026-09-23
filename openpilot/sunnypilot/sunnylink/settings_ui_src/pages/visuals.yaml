@@ -11,11 +11,40 @@ sections:
   title: HUD Elements
   description: Overlays shown on the driving screen
   items:
+  - key: AdjacentLaneObjectMarkers
+    widget: toggle
+    title: Adjacent Lane Object Markers
+    description: Show yellow markers for high-confidence model lead candidates outside the current driving path. The driving
+      model does not provide a complete object list, so some nearby vehicles may not appear.
+    visibility:
+    - $ref: '#/macros/hide_on_mici'
   - key: BlindSpot
     widget: toggle
     title: Show Blind Spot Warnings
     description: Enabling this will display warnings when a vehicle is detected in your blind spot as long as your car has
       BSM supported.
+  - key: HkgCornerRadarDetection
+    widget: toggle
+    title: HKG Corner Radar Detection (Experimental)
+    description: >-
+      Show yellow radar candidates beside the speedometer, separately from blind-spot icons. RADAR* means experimental:
+      sensor mounting and validity still need vehicle validation. Display only; no control decisions.
+    visibility:
+    - type: capability
+      field: hkg_corner_radar_available
+      equals: true
+  - key: HkgFactorySideVehicleDisplay
+    widget: toggle
+    title: Kia EV6 Factory Cluster Side Vehicles
+    description: >-
+      Keep verified real left/right vehicle graphics on the Kia factory instrument cluster while sunnypilot longitudinal
+      control or Experimental Mode is active. Display only: this does not enable Kia automatic lane changes or use side
+      targets for driving decisions. Unsupported firmware, stale data, or a CAN sender conflict produces no added vehicle
+      graphic. A restart is required after changing this setting.
+    visibility:
+    - type: capability
+      field: hkg_factory_side_display_candidate
+      equals: true
   - key: TorqueBar
     widget: toggle
     title: Steering Arc
@@ -108,4 +137,16 @@ sections:
   - key: RainbowMode
     widget: toggle
     title: Tesla Rainbow Mode
-    description: Display a rainbow effect on the path the model wants to take. It does not affect driving in any way.
+    description: Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only.
+  - key: RainbowModeStyle
+    widget: option
+    title: Tesla Rainbow Mode Style
+    description: Blue bars animate with actual vehicle acceleration and deceleration. A model-predicted stop is shown for
+      any cause, including traffic lights or stop signs. The model does not identify light colors or sign types.
+    options:
+    - value: 0
+      label: Rainbow Road
+    - value: 1
+      label: Dynamic Blue Bars
+    enablement:
+    - {type: param, key: RainbowMode, equals: true}

@@ -1,8 +1,11 @@
 import atexit
+import glob
+import os
+import shutil
+import subprocess
 import threading
 import time
 import uuid
-import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import IntEnum
@@ -35,6 +38,9 @@ else:
     Params = None
 
 TETHERING_IP_ADDRESS = "192.168.43.1"
+TETHERING_SUBNET = "192.168.43.0/24"
+TETHERING_INTERFACE = "wlan0"
+TETHERING_DNS_SERVERS = ("8.8.8.8", "1.1.1.1")
 DEFAULT_TETHERING_PASSWORD = "swagswagcomma"
 SIGNAL_QUEUE_SIZE = 10
 SCAN_PERIOD_SECONDS = 5
@@ -154,6 +160,12 @@ class WifiState:
   status: ConnectStatus = ConnectStatus.DISCONNECTED
 
 
+@dataclass(frozen=True)
+class TetheringClient:
+  ip_address: str
+  mac_address: str
+
+
 class WifiManager:
   def __init__(self):
     self._networks: list[Network] = []  # an unsorted list of available Networks. a Network can be comprised of multiple APs
@@ -182,8 +194,7 @@ class WifiManager:
     self._ipv4_address: str = ""
     self._current_network_metered: MeteredType = MeteredType.UNKNOWN
     self._tethering_password: str = ""
-    self._ipv4_forward = False
-
+    self._tethering_clients: list[TetheringClient] = []
     self._last_network_scan: float = 0.0
     self._callback_queue: list[Callable] = []
 
@@ -215,10 +226,17 @@ class WifiManager:
       self._state_thread.start()
 
       self._init_connections()
-      if Params is not None and self._tethering_ssid not in self._connections:
-        self._add_tethering_connection()
+      if Params is not None:
+        if self._tethering_ssid not in self._connections:
+          self._add_tethering_connection()
+        else:
+          self._update_tethering_connection()
 
       self._init_wifi_state()
+
+      if self.is_tethering_active():
+        self._configure_tethering_forwarding(True)
+        self._update_tethering_clients()
 
       self._tethering_password = self._get_tethering_password()
       cloudlog.debug("WifiManager initialized")
@@ -304,6 +322,10 @@ class WifiManager:
   @property
   def tethering_password(self) -> str:
     return self._tethering_password
+
+  @property
+  def tethering_clients(self) -> list[TetheringClient]:
+    return list(self._tethering_clients)
 
   def _set_connecting(self, ssid: str | None):
     # Called by user action, or sequentially from state change handler
@@ -501,6 +523,7 @@ class WifiManager:
       if self._active:
         if time.monotonic() - self._last_network_scan > SCAN_PERIOD_SECONDS:
           self._request_scan()
+          self._update_tethering_clients()
           self._last_network_scan = time.monotonic()
       time.sleep(1 / 2.)
 
@@ -593,6 +616,21 @@ class WifiManager:
       return {}
     return dict(reply.body[0])
 
+  @staticmethod
+  def _tethering_ipv4_settings() -> dict:
+    return {
+      'method': ('s', 'shared'),
+      'address-data': ('aa{sv}', [[
+        ('address', ('s', TETHERING_IP_ADDRESS)),
+        ('prefix', ('u', 24)),
+      ]]),
+      'gateway': ('s', TETHERING_IP_ADDRESS),
+      'never-default': ('b', True),
+      'dns-data': ('as', list(TETHERING_DNS_SERVERS)),
+      'dns-priority': ('i', -50),
+      'ignore-auto-dns': ('b', True),
+    }
+
   def _add_tethering_connection(self):
     connection = {
       'connection': {
@@ -600,7 +638,7 @@ class WifiManager:
         'uuid': ('s', str(uuid.uuid4())),
         'id': ('s', 'Hotspot'),
         'autoconnect-retries': ('i', 0),
-        'interface-name': ('s', 'wlan0'),
+        'interface-name': ('s', TETHERING_INTERFACE),
         'autoconnect': ('b', False),
       },
       '802-11-wireless': {
@@ -615,20 +653,30 @@ class WifiManager:
         'proto': ('as', ['rsn']),
         'psk': ('s', DEFAULT_TETHERING_PASSWORD),
       },
-      'ipv4': {
-        'method': ('s', 'shared'),
-        'address-data': ('aa{sv}', [[
-          ('address', ('s', TETHERING_IP_ADDRESS)),
-          ('prefix', ('u', 24)),
-        ]]),
-        'gateway': ('s', TETHERING_IP_ADDRESS),
-        'never-default': ('b', True),
-      },
+      'ipv4': self._tethering_ipv4_settings(),
       'ipv6': {'method': ('s', 'ignore')},
     }
 
     settings_addr = DBusAddress(NM_SETTINGS_PATH, bus_name=NM, interface=NM_SETTINGS_IFACE)
     self._router_main.send_and_get_reply(new_method_call(settings_addr, 'AddConnection', 'a{sa{sv}}', (connection,)))
+
+  def _update_tethering_connection(self):
+    conn_path = self._connections.get(self._tethering_ssid)
+    if conn_path is None:
+      return
+
+    settings = self._get_connection_settings(conn_path)
+    if not settings:
+      return
+
+    settings['connection']['interface-name'] = ('s', TETHERING_INTERFACE)
+    settings['ipv4'] = self._tethering_ipv4_settings()
+    settings['ipv6'] = {'method': ('s', 'ignore')}
+
+    conn_addr = DBusAddress(conn_path, bus_name=NM, interface=NM_CONNECTION_IFACE)
+    reply = self._router_main.send_and_get_reply(new_method_call(conn_addr, 'Update', 'a{sa{sv}}', (settings,)))
+    if reply.header.message_type == MessageType.error:
+      cloudlog.warning(f'Failed to update tethering network settings: {reply}')
 
   def connect_to_network(self, ssid: str, password: str, hidden: bool = False):
     self._set_connecting(ssid)
@@ -796,20 +844,177 @@ class WifiManager:
 
     return str(secrets['802-11-wireless-security'].get('psk', ('s', ''))[1])
 
-  def set_ipv4_forward(self, enabled: bool):
-    self._ipv4_forward = enabled
+  @staticmethod
+  def _find_executable(names: tuple[str, ...]) -> str | None:
+    for name in names:
+      executable = shutil.which(name)
+      if executable is not None:
+        return executable
+
+    for directory in ("/usr/sbin", "/sbin", "/usr/bin", "/bin"):
+      for name in names:
+        executable = os.path.join(directory, name)
+        if os.path.isfile(executable) and os.access(executable, os.X_OK):
+          return executable
+    return None
+
+  @staticmethod
+  def _run_privileged(command: list[str]) -> subprocess.CompletedProcess[str] | None:
+    if os.geteuid() != 0:
+      sudo = WifiManager._find_executable(("sudo",)) or "/usr/bin/sudo"
+      command = [sudo, "-n", *command]
+
+    try:
+      return subprocess.run(command, capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+      cloudlog.warning(f"Failed to run tethering command {command}: {e}")
+      return None
+
+  @classmethod
+  def _run_iptables(cls, table: str, arguments: list[str]) -> subprocess.CompletedProcess[str] | None:
+    iptables = cls._find_executable(("iptables", "iptables-nft", "iptables-legacy"))
+    if iptables is None:
+      cloudlog.warning("No iptables implementation found; unable to configure tethering firewall")
+      return None
+    return cls._run_privileged([iptables, "-w", "2", "-t", table, *arguments])
+
+  @classmethod
+  def _ensure_iptables_chain(cls, table: str, builtin_chain: str, custom_chain: str):
+    create = cls._run_iptables(table, ["-N", custom_chain])
+    if create is None:
+      return False
+
+    cls._run_iptables(table, ["-F", custom_chain])
+    hook = cls._run_iptables(table, ["-C", builtin_chain, "-j", custom_chain])
+    if hook is not None and hook.returncode != 0:
+      insert = cls._run_iptables(table, ["-I", builtin_chain, "1", "-j", custom_chain])
+      return insert is not None and insert.returncode == 0
+    return hook is not None
+
+  @classmethod
+  def _remove_iptables_chain(cls, table: str, builtin_chain: str, custom_chain: str):
+    cls._run_iptables(table, ["-D", builtin_chain, "-j", custom_chain])
+    cls._run_iptables(table, ["-F", custom_chain])
+    cls._run_iptables(table, ["-X", custom_chain])
+
+  @classmethod
+  def _configure_tethering_forwarding(cls, enabled: bool):
+    chains = (
+      ("filter", "INPUT", "SP_TETH_INPUT"),
+      ("filter", "FORWARD", "SP_TETH_FWD"),
+      ("nat", "POSTROUTING", "SP_TETH_NAT"),
+      ("mangle", "FORWARD", "SP_TETH_MANGLE"),
+    )
+
+    if not enabled:
+      for table, builtin_chain, custom_chain in chains:
+        cls._remove_iptables_chain(table, builtin_chain, custom_chain)
+      return
+
+    sysctl = cls._find_executable(("sysctl",))
+    if sysctl is None:
+      cloudlog.warning("sysctl was not found; unable to enable IPv4 forwarding")
+    else:
+      result = cls._run_privileged([sysctl, "-w", "net.ipv4.ip_forward=1"])
+      if result is None or result.returncode != 0:
+        error = "" if result is None else result.stderr.strip()
+        cloudlog.warning(f"Failed to enable IPv4 forwarding: {error}")
+
+    chains_ready = [cls._ensure_iptables_chain(*chain) for chain in chains]
+    if not all(chains_ready):
+      cloudlog.warning("Failed to create one or more tethering firewall chains")
+      return
+
+    rules = (
+      ("filter", ["-A", "SP_TETH_INPUT", "-i", TETHERING_INTERFACE,
+                  "-p", "udp", "--sport", "68", "--dport", "67", "-j", "ACCEPT"]),
+      ("filter", ["-A", "SP_TETH_INPUT", "-i", TETHERING_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "udp", "--dport", "53", "-j", "ACCEPT"]),
+      ("filter", ["-A", "SP_TETH_INPUT", "-i", TETHERING_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]),
+      ("filter", ["-A", "SP_TETH_INPUT", "-i", TETHERING_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "icmp", "-j", "ACCEPT"]),
+      ("filter", ["-A", "SP_TETH_FWD", "-i", TETHERING_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("filter", ["-A", "SP_TETH_FWD", "-o", TETHERING_INTERFACE, "-d", TETHERING_SUBNET,
+                  "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]),
+      ("nat", ["-A", "SP_TETH_NAT", "-s", TETHERING_SUBNET, "!", "-d", TETHERING_SUBNET, "-j", "MASQUERADE"]),
+      ("mangle", ["-A", "SP_TETH_MANGLE", "-i", TETHERING_INTERFACE, "-s", TETHERING_SUBNET,
+                  "-p", "tcp", "--tcp-flags", "SYN,RST", "SYN", "-j", "TCPMSS", "--clamp-mss-to-pmtu"]),
+    )
+    for table, rule in rules:
+      result = cls._run_iptables(table, rule)
+      if result is None or result.returncode != 0:
+        error = "" if result is None else result.stderr.strip()
+        cloudlog.warning(f"Failed to add tethering firewall rule {rule}: {error}")
+
+  def _update_tethering_clients(self):
+    if not self.is_tethering_active():
+      self._tethering_clients = []
+      return
+
+    ip = self._find_executable(("ip",))
+    if ip is None:
+      return
+
+    try:
+      result = subprocess.run([ip, "neigh", "show"], capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+      return
+
+    neighbors: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+      fields = line.split()
+      if len(fields) < 5 or "lladdr" not in fields or fields[-1] in ("FAILED", "INCOMPLETE"):
+        continue
+      ip_address = fields[0]
+      mac_index = fields.index("lladdr") + 1
+      if not ip_address.startswith("192.168.43.") or mac_index >= len(fields):
+        continue
+      neighbors[fields[mac_index].lower()] = ip_address
+
+    # NetworkManager's shared dnsmasq lease survives even when a client has not
+    # generated enough traffic to remain in the kernel neighbor table.
+    for lease_path in glob.glob("/var/lib/NetworkManager/dnsmasq-*.leases"):
+      try:
+        with open(lease_path) as lease_file:
+          for line in lease_file:
+            fields = line.split()
+            if len(fields) >= 3 and fields[2].startswith("192.168.43."):
+              neighbors[fields[1].lower()] = fields[2]
+      except OSError:
+        continue
+
+    stations: set[str] = set()
+    iw = self._find_executable(("iw",))
+    if iw is not None:
+      interfaces = {TETHERING_INTERFACE}
+      dev_result = self._run_privileged([iw, "dev"])
+      if dev_result is not None and dev_result.returncode == 0:
+        interfaces.update(line.split()[1] for line in dev_result.stdout.splitlines() if line.strip().startswith("Interface "))
+      for interface in interfaces:
+        station_result = self._run_privileged([iw, "dev", interface, "station", "dump"])
+        if station_result is not None and station_result.returncode == 0:
+          for line in station_result.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == "Station":
+              stations.add(fields[1].lower())
+
+    mac_addresses = stations | set(neighbors)
+    clients = [TetheringClient(neighbors.get(mac_address, "—"), mac_address) for mac_address in mac_addresses]
+    self._tethering_clients = sorted(clients, key=lambda client: (client.ip_address == "—", client.ip_address, client.mac_address))
 
   def set_tethering_active(self, active: bool):
     def worker():
       if active:
+        self._update_tethering_connection()
         self.activate_connection(self._tethering_ssid, block=True)
-
-        if not self._ipv4_forward:
-          time.sleep(5)
-          cloudlog.warning("net.ipv4.ip_forward = 0")
-          subprocess.run(["sudo", "sysctl", "net.ipv4.ip_forward=0"], check=False)
+        self._configure_tethering_forwarding(True)
+        self._update_tethering_clients()
       else:
+        self._configure_tethering_forwarding(False)
         self._deactivate_connection(self._tethering_ssid)
+        self._tethering_clients = []
 
     threading.Thread(target=worker, daemon=True).start()
 

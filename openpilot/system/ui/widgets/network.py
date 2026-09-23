@@ -9,7 +9,7 @@ from openpilot.system.ui.lib.scroll_panel import GuiScrollPanel
 from openpilot.system.ui.lib.wifi_manager import WifiManager, SecurityType, Network, MeteredType, normalize_ssid
 from openpilot.system.ui.widgets import DialogResult, Widget
 from openpilot.system.ui.widgets.button import ButtonStyle, Button
-from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
+from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog, alert_dialog
 from openpilot.system.ui.widgets.keyboard import Keyboard
 from openpilot.system.ui.widgets.label import gui_label
 from openpilot.system.ui.widgets.scroller_tici import Scroller
@@ -122,6 +122,14 @@ class AdvancedNetworkSettings(Widget):
     self._prime_state = ui_state.prime_state
     self._cell_prime_types = (PrimeType.NONE, PrimeType.LITE)
 
+    # Resetting the modem can briefly interrupt the shared GNSS module, so this
+    # control is intentionally unavailable while driving.
+    sim_enabled = self._params.get_bool("GsmEnabled")
+    self._sim_action = ToggleAction(initial_state=sim_enabled, enabled=lambda: not ui_state.started)
+    self._sim_btn = ListItem(lambda: tr("Enable SIM Card"),
+                             description=lambda: tr("Turn mobile data off, or reset the modem and re-read the SIM when enabled. Available while parked."),
+                             action_item=self._sim_action, callback=self._toggle_sim)
+
     self._keyboard = Keyboard(max_text_size=MAX_PASSWORD_LENGTH, min_text_size=MIN_PASSWORD_LENGTH, show_password_toggle=True)
 
     # Tethering
@@ -131,6 +139,12 @@ class AdvancedNetworkSettings(Widget):
     # Edit tethering password
     self._tethering_password_action = ButtonAction(lambda: tr("EDIT"))
     tethering_password_btn = ListItem(lambda: tr("Tethering Password"), action_item=self._tethering_password_action, callback=self._edit_tethering_password)
+
+    # Connected tethering clients
+    self._connected_devices_btn = button_item(lambda: tr("Connected Devices"),
+                                              lambda: str(len(self._wifi_manager.tethering_clients)),
+                                              callback=self._show_connected_devices)
+    self._connected_devices_btn.set_visible(False)
 
     # Roaming toggle
     roaming_enabled = self._params.get_bool("GsmRoaming")
@@ -156,7 +170,9 @@ class AdvancedNetworkSettings(Widget):
     items: list[Widget] = [
       tethering_btn,
       tethering_password_btn,
+      self._connected_devices_btn,
       text_item(lambda: tr("IP Address"), lambda: self._wifi_manager.ipv4_address),
+      self._sim_btn,
       self._roaming_btn,
       self._apn_btn,
       self._cellular_metered_btn,
@@ -170,6 +186,7 @@ class AdvancedNetworkSettings(Widget):
     self._tethering_action.set_enabled(True)
     self._tethering_action.set_state(self._wifi_manager.is_tethering_active())
     self._tethering_password_action.set_enabled(True)
+    self._connected_devices_btn.set_visible(self._wifi_manager.is_tethering_active())
 
     if self._wifi_manager.is_tethering_active() or self._wifi_manager.ipv4_address == "":
       self._wifi_metered_action.set_enabled(False)
@@ -188,6 +205,20 @@ class AdvancedNetworkSettings(Widget):
 
   def _toggle_roaming(self):
     self._params.put_bool("GsmRoaming", self._roaming_action.get_state(), block=True)
+
+  def _toggle_sim(self):
+    if ui_state.started:
+      self._sim_action.set_state(self._params.get_bool("GsmEnabled"))
+      return
+    self._params.put_bool("GsmEnabled", self._sim_action.get_state(), block=True)
+
+  def _show_connected_devices(self):
+    clients = self._wifi_manager.tethering_clients
+    if clients:
+      message = "\n".join(f"{client.ip_address}    {client.mac_address}" for client in clients)
+    else:
+      message = tr("No devices connected")
+    gui_app.push_widget(alert_dialog(message))
 
   def _edit_apn(self):
     def update_apn(result: DialogResult):
@@ -264,9 +295,11 @@ class AdvancedNetworkSettings(Widget):
   def _update_state(self):
     self._wifi_manager.process_callbacks()
 
-    # If not using prime SIM, show GSM settings and enable IPv4 forwarding
+    # If not using prime SIM, show GSM settings. The custom PPP modem process
+    # manages cellular forwarding and NAT independently of NetworkManager.
     show_cell_settings = self._prime_state.get_type() in self._cell_prime_types
-    self._wifi_manager.set_ipv4_forward(show_cell_settings)
+    self._sim_btn.set_visible(show_cell_settings)
+    self._sim_action.set_state(self._params.get_bool("GsmEnabled"))
     self._roaming_btn.set_visible(show_cell_settings)
     self._apn_btn.set_visible(show_cell_settings)
     self._cellular_metered_btn.set_visible(show_cell_settings)

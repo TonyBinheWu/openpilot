@@ -383,6 +383,19 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadOne @2 :LeadData;
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
+  creepLaneChangeActive @5 :Bool;
+  factoryClusterTargets @6 :List(FactoryClusterTarget);
+  factoryClusterRadarMonoTime @7 :UInt64;
+  factoryClusterRadarValid @8 :Bool;
+
+  struct FactoryClusterTarget {
+    trackId @0 :UInt64;
+    sourceMonoTime @1 :UInt64;
+    dRel @2 :Float32;
+    yRel @3 :Float32;
+    vRel @4 :Float32;
+    measured @5 :Bool;
+  }
 
   struct Param {
     key @0 :Text;
@@ -462,6 +475,7 @@ struct ModelDataV2SP @0xa1680744031fdb2d {
   laneTurnDirection @0 :TurnDirection;
   leftLaneChangeEdgeBlock @1 :Bool;
   rightLaneChangeEdgeBlock @2 :Bool;
+  creepLaneChangeActive @3 :Bool;
 
   enum TurnDirection {
     none @0;
@@ -470,7 +484,46 @@ struct ModelDataV2SP @0xa1680744031fdb2d {
   }
 }
 
-struct CustomReserved10 @0xcb9fd56c7057593a {
+struct CornerRadarStateSP @0xcb9fd56c7057593a {
+  targets @0 :List(Target);
+  rawFrames @1 :List(RawFrame);
+  observedBuses @2 :List(UInt8);
+  candidateFrames @3 :UInt32;
+  rejectedLength @4 :UInt32;
+  timestampErrors @5 :UInt32;
+  droppedRawFrames @6 :UInt32;
+  researchSource @7 :Text;
+
+  struct Target {
+    trackId @0 :UInt32;
+    sensorGroup @1 :UInt8;
+    sourceBus @2 :UInt8;
+    address @3 :UInt16;
+    slot @4 :UInt8;
+    candidateActive @5 :Bool;
+    statusValidated @6 :Bool;
+    distance @7 :Float32;
+    encodedAngle @8 :Float32;
+    correctedAngle @9 :Float32;
+    longitudinal @10 :Float32;
+    lateral @11 :Float32;
+    relativeSpeed @12 :Float32;
+    relativeSpeedValid @13 :Bool;
+    estimatedRadialSpeed @14 :Float32;
+    estimatedRadialSpeedValid @15 :Bool;
+    targetIdentityValidated @16 :Bool;
+    mountingValidated @17 :Bool;
+    ageSec @18 :Float32;
+  }
+
+  struct RawFrame {
+    timestampNanos @0 :UInt64;
+    sourceBus @1 :UInt8;
+    address @2 :UInt16;
+    data @3 :Data;
+    acceptedLength @4 :Bool;
+    timestampAccepted @5 :Bool;
+  }
 }
 
 struct CustomReserved11 @0xc2243c65e0340384 {

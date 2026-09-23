@@ -8,11 +8,15 @@ from typing import Any
 
 from opendbc.car import structs
 from opendbc.car.interfaces import CarInterfaceBase
+from opendbc.sunnypilot.car.hyundai.factory_cluster import (
+  FACTORY_SIDE_DISPLAY_PARAM,
+  FACTORY_SIDE_DISPLAY_STATUS_PARAM,
+  configuration_status,
+)
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.controls.lib.nnlc.helpers import get_nn_model_path
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import set_speed_limit_assist_availability
-
 import openpilot.system.sentry as sentry
 
 from openpilot.sunnypilot.sunnylink.statsd import STATSLOGSP
@@ -99,11 +103,15 @@ def _cleanup_unsupported_params(CP: structs.CarParams, CP_SP: structs.CarParamsS
 
 
 def setup_interfaces(CI: CarInterfaceBase, params: Params | None = None) -> None:
+  if params is None:
+    params = Params()
   enforce_torque = _enforce_torque_lateral_control(CI.CP, params)
   nnlc_enabled = _initialize_neural_network_lateral_control(CI.CP, CI.CP_SP, params)
   _initialize_intelligent_cruise_button_management(CI.CP, CI.CP_SP, params)
   _initialize_torque_lateral_control(CI, CI.CP, enforce_torque, nnlc_enabled)
   _cleanup_unsupported_params(CI.CP, CI.CP_SP)
+  status = configuration_status(CI.CP, params.get_bool(FACTORY_SIDE_DISPLAY_PARAM))
+  params.put(FACTORY_SIDE_DISPLAY_STATUS_PARAM, status.value)
 
   try:
     STATSLOGSP.raw('sunnypilot.car_params', CI.CP.to_dict())
@@ -118,6 +126,7 @@ def initialize_params(params) -> list[dict[str, Any]]:
   # hyundai
   keys.extend([
     "HkgLowSpeedTorque",
+    FACTORY_SIDE_DISPLAY_PARAM,
     "HyundaiLongitudinalTuning",
   ])
 
