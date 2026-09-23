@@ -91,7 +91,6 @@ DEFAULT_TEXT_COLOR = rl.Color(255, 255, 255, int(255 * 0.9))
 # Qt draws fonts accounting for ascent/descent differently, so compensate to match old styles
 # The real scales for the fonts below range from 1.212 to 1.266
 FONT_SCALE = 1.242 if BIG_UI else 1.16
-ZH_CHT_TEXT_SCALE = 1.18
 
 ASSETS_DIR = files("openpilot.selfdrive").joinpath("assets")
 FONT_DIR = ASSETS_DIR.joinpath("fonts")
@@ -101,7 +100,7 @@ NOTO_FONTS = {
   "ko": "NotoSansCJKkr-Regular.otf",
   "th": "NotoSansThai-Regular.ttf",
   "zh-CHS": "NotoSansCJKsc-Regular.otf",
-  "zh-CHT": "SourceHanSansTC-Regular.otf",
+  "zh-CHT": "NotoSansCJKtc-Regular.otf",
 }
 
 
@@ -131,17 +130,10 @@ class TextAlignmentVertical(IntEnum):
   BOTTOM = 2
 
 
-def text_size_scale(text: str = "") -> float:
-  """Return the render scale for the active language and text."""
-  if multilang.language == "zh-CHT" and any(ord(char) > 0x7F for char in text):
-    return FONT_SCALE * ZH_CHT_TEXT_SCALE
-  return FONT_SCALE
-
-
-def font_fallback(font: rl.Font, text: str = "") -> rl.Font:
-  """Use a language-appropriate fallback only when text needs it."""
-  if multilang.requires_font_fallback() and any(ord(char) > 0x7F for char in text):
-    return gui_app.fallback_font(text)
+def font_fallback(font: rl.Font) -> rl.Font:
+  """Use a Noto fallback for languages not covered by Inter."""
+  if multilang.requires_font_fallback():
+    return gui_app.fallback_font()
   return font
 
 
@@ -230,7 +222,6 @@ class GuiApplication(GuiApplicationExt):
 
     self._fonts: dict[FontWeight, rl.Font] = {}
     self._fallback_fonts: dict[str, rl.Font] = {}
-    self._fallback_codepoints: dict[str, set[int]] = {}
     self._width = width if width is not None else GuiApplication._default_width()
     self._height = height if height is not None else GuiApplication._default_height()
 
@@ -715,12 +706,11 @@ class GuiApplication(GuiApplicationExt):
   def font(self, font_weight: FontWeight = FontWeight.NORMAL) -> rl.Font:
     return self._fonts[font_weight]
 
-  def fallback_font(self, text: str = "") -> rl.Font:
+  def fallback_font(self) -> rl.Font:
     language = multilang.language
     if language not in self._fallback_fonts:
       chars = set(map(chr, range(32, 127))) | set(EXTRA_FONT_CHARS)
       chars.update(TRANSLATIONS_DIR.joinpath(f"app_{language}.po").read_text(encoding="utf-8"))
-      chars.update(text)
       codepoints = sorted(map(ord, chars))
       codepoint_buffer = rl.ffi.new("int[]", codepoints)
       with as_file(FONT_DIR) as fspath:
@@ -729,29 +719,6 @@ class GuiApplication(GuiApplicationExt):
       rl.gen_texture_mipmaps(font.texture)
       rl.set_texture_filter(font.texture, rl.TextureFilter.TEXTURE_FILTER_TRILINEAR)
       self._fallback_fonts[language] = font
-      self._fallback_codepoints[language] = {font.glyphs[i].value for i in range(font.glyphCount)}
-    # Shipped Noto fonts are subsets. New translations can contain missing glyphs.
-    # Use bundled Unifont for those strings, with the same font for measuring/drawing.
-    if any(not c.isspace() and ord(c) not in self._fallback_codepoints[language] for c in text):
-      fallback_key = language + ":unifont"
-      required_codepoints = {ord(c) for c in text if not c.isspace()}
-      loaded_codepoints = self._fallback_codepoints.get(fallback_key, set())
-      if not required_codepoints.issubset(loaded_codepoints):
-        chars = set(map(chr, range(32, 127))) | set(EXTRA_FONT_CHARS)
-        chars.update(TRANSLATIONS_DIR.joinpath(f"app_{language}.po").read_text(encoding="utf-8"))
-        chars.update(map(chr, loaded_codepoints))
-        chars.update(text)
-        codepoints = sorted(map(ord, chars))
-        buffer = rl.ffi.new("int[]", codepoints)
-        with as_file(FONT_DIR) as fspath:
-          fallback = rl.load_font_ex((fspath / "unifont.otf").as_posix(), 48, rl.ffi.cast("int *", buffer), len(codepoints))
-        rl.set_texture_filter(fallback.texture, rl.TextureFilter.TEXTURE_FILTER_BILINEAR)
-        old_fallback = self._fallback_fonts.get(fallback_key)
-        self._fallback_fonts[fallback_key] = fallback
-        self._fallback_codepoints[fallback_key] = {fallback.glyphs[i].value for i in range(fallback.glyphCount)}
-        if old_fallback is not None:
-          rl.unload_font(old_fallback)
-      return self._fallback_fonts[fallback_key]
     return self._fallback_fonts[language]
 
   @property
@@ -790,8 +757,8 @@ class GuiApplication(GuiApplicationExt):
       rl._orig_draw_text_ex = rl.draw_text_ex
 
     def _draw_text_ex_scaled(font, text, position, font_size, spacing, tint):
-      font = font_fallback(font, text)
-      return rl._orig_draw_text_ex(font, text, position, font_size * text_size_scale(text), spacing, tint)
+      font = font_fallback(font)
+      return rl._orig_draw_text_ex(font, text, position, font_size * FONT_SCALE, spacing, tint)
 
     rl.draw_text_ex = _draw_text_ex_scaled
 

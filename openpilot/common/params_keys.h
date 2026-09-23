@@ -51,7 +51,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"GithubUsername", {PERSISTENT | BACKUP, STRING}},
     {"GitRemote", {PERSISTENT, STRING}},
     {"GsmApn", {PERSISTENT | BACKUP, STRING}},
-    {"GsmEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"GsmMetered", {PERSISTENT | BACKUP, BOOL, "1"}},
     {"GsmRoaming", {PERSISTENT | BACKUP, BOOL}},
     {"HardwareSerial", {PERSISTENT, STRING}},
@@ -97,7 +96,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"Offroad_ChestnutOverheated", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ChestnutPcieUnavailable", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ChestnutUncompiled", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
-    {"Offroad_ChestnutUpdateFailed", {CLEAR_ON_MANAGER_START, JSON}},
+    {"Offroad_ChestnutUpdateFailed", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_ChestnutUsbSlow", {CLEAR_ON_MANAGER_START | CLEAR_ON_ONROAD_TRANSITION, JSON}},
     {"Offroad_ConnectivityNeeded", {CLEAR_ON_MANAGER_START, JSON}},
     {"Offroad_ConnectivityNeededPrompt", {CLEAR_ON_MANAGER_START, JSON}},
@@ -186,8 +185,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"QuickBootToggle", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"QuietMode", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"RainbowMode", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"RainbowModeStyle", {PERSISTENT | BACKUP, INT, "0"}},
-    {"AdjacentLaneObjectMarkers", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"RoadEdgeLaneChangeEnabled", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"RocketFuel", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"ScreenSaverEnabled", {PERSISTENT | BACKUP, BOOL, "1"}},
@@ -245,11 +242,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"DynamicExperimentalControl", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"BlindSpot", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"BlindSpotDisplayStyle", {PERSISTENT | BACKUP, INT, "0"}},
-    {"PredictedStopMarker", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"HkgCornerRadarDetection", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"HkgFactorySideVehicleDisplay", {PERSISTENT | BACKUP, BOOL, "0"}},
-    {"HkgFactorySideVehicleDisplayStatus", {PERSISTENT, STRING, "off"}},
 
     // sunnypilot model params
     {"CameraOffset", {PERSISTENT | BACKUP, FLOAT, "0.0"}},

@@ -8,8 +8,6 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.selfdrive.ui.ui_state import ui_state, UIStatus
 from openpilot.selfdrive.ui.sunnypilot.onroad.chevron_metrics import ChevronMetrics
 from openpilot.selfdrive.ui.sunnypilot.onroad.rainbow_path import RainbowPath
-from openpilot.selfdrive.ui.sunnypilot.onroad.blue_path import DynamicBluePath
-from openpilot.selfdrive.ui.sunnypilot.onroad.predicted_stop_marker import PredictedStopMarker
 from openpilot.selfdrive.ui.sunnypilot.ui_state import MADSState
 from openpilot.system.ui.lib.application import gui_app
 
@@ -17,8 +15,6 @@ from openpilot.system.ui.lib.application import gui_app
 class ModelRendererSP:
   def __init__(self):
     self.rainbow_path = RainbowPath()
-    self.blue_path = DynamicBluePath()
-    self.predicted_stop_marker = PredictedStopMarker()
     self.chevron_metrics = ChevronMetrics()
     self._width_filter = FirstOrderFilter(0.9, 0.1, 1 / gui_app.target_fps)
 
@@ -34,6 +30,3 @@ class ModelRendererSP:
   def _get_path_half_width(self) -> float:
     target = 0.9 if self._lateral_active else 0.40
     return self._width_filter.update(target)
-
-  def draw_predicted_stop_marker(self, rect, path, sm, project, z_offset) -> None:
-    self.predicted_stop_marker.render(rect, path, sm, project, z_offset)

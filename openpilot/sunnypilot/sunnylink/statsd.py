@@ -59,7 +59,6 @@ def sp_stats(end_event):
     'IntelligentCruiseButtonManagement',
     'QuietMode',
     'RainbowMode',
-    'RainbowModeStyle',
     'ShowAdvancedControls',
     'Mads',
     'MadsMainCruiseAllowed',

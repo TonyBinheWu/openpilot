@@ -13,7 +13,6 @@ import numpy as np
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal import log
 from opendbc.car.structs import car
-from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.cereal.messaging import PubMaster, SubMaster
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.cereal.visionipc import VisionStreamType
@@ -351,7 +350,7 @@ def main(demo=False):
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
 
-  DH = DesireHelper(bool(CP.brand == "hyundai" and CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE))
+  DH = DesireHelper()
   RELC = RoadEdgeLaneChangeController()
 
   while True:
@@ -432,6 +431,7 @@ def main(demo=False):
       'traffic_convention': traffic_convention,
       'action_t': np.array([lat_action_t, long_action_t], dtype=np.float32),
     }
+
     mt1 = time.perf_counter()
     try:
       send_chestnut = (chestnut_state is not None and
@@ -471,16 +471,10 @@ def main(demo=False):
       lane_change_prob = l_lane_change_prob + r_lane_change_prob
       mdv2sp_send = messaging.new_message('modelDataV2SP')
       left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
-      lead = modelv2_send.modelV2.leadsV3[0]
-      lead_distance = float(lead.x[0]) if len(lead.x) else float("nan")
-      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge,
-                modelv2_send.valid, float(lead.prob), lead_distance)
+      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
-      mdv2sp_send.modelDataV2SP.creepLaneChangeActive = \
-        DH.creep_lane_change and DH.lane_change_state == log.LaneChangeState.laneChangeStarting
-      mdv2sp_send.valid = modelv2_send.valid
 
       fill_driving_model_data(drivingdata_send, modelv2_send)
       fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)

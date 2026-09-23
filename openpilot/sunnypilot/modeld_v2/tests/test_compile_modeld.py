@@ -281,3 +281,4 @@ class TestStockCompileModeldEquivalence(OpenpilotTestCase):
     for key in sunny_npy:
       assert sunny_npy[key].shape == stock_npy[key].shape == (3, 3)
 
+

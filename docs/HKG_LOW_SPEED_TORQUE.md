@@ -1,62 +1,102 @@
-# HKG 低速轉向扭力與速率（實驗功能）
+# HKG 低速動態轉向扭力實驗分支
 
 分支：`TonyBinheWu/sunnypilot:hkg-enhanced`
 
-這個分支以 comma 2022 年 EV6 實作的 `STEER_MAX = 384`、`STEER_DELTA_UP/DOWN = 10/10` 為低速基準，並在既有 HKG 動態曲線前增加連續銜接區間。目標是保留低速轉向能力，同時避免舊實作在 11 m/s 直接切換扭力上限與速率造成的控制突變。
+此功能由 `ev6-low-speed-torque` 分支恢復至 `hkg-enhanced`，供 Hyundai／Kia／Genesis（HKG）CAN-FD 車型使用。
 
-參考來源：[commaai/openpilot 2022 舊提交 `9ee8015`](https://github.com/commaai/openpilot/commit/9ee80155e837ec82b0f4a1880e599bc705f3a550)
+opendbc 固定至 `TonyBinheWu/opendbc@95d1576b16222d83eecdabcd0fb81753e68f1737`，讓 Python 控制器與 Panda safety 使用同一組動態曲線與啟用旗標。
 
-控制器與 Panda safety 固定至 [`TonyBinheWu/opendbc@fa487493`](https://github.com/TonyBinheWu/opendbc/commit/fa4874935666a796fb4dcb0f4afa4056c105216f)，兩端使用相同的扭力與速率曲線。
+## 安裝
 
-## 安裝與開關
-
-在 comma 裝置的自訂軟體安裝畫面輸入：
+在 comma 裝置的「Custom Software／自訂軟體」安裝畫面輸入：
 
 ```text
 install.sunnypilot.ai/fork/TonyBinheWu/hkg-enhanced
 ```
 
-在裝置的 **Settings → Steering → HKG Low-Speed Steering Torque (Experimental)** 開啟。此開關預設關閉，只能在 offroad 狀態調整，並於下一次行車啟動時生效。
+完整網址：<https://install.sunnypilot.ai/fork/TonyBinheWu/hkg-enhanced>
 
-原本獨立的 `HKG Creep Lane Change` 開關已移除。啟用 `HKG Low-Speed Steering Torque` 時，會同時啟用相容 HKG 車型的 0–5 km/h 單次方向燈自動變換車道邏輯；它不再有獨立的 400 扭力區間，而是全程使用下列同一套扭力與速率限制。
+`/fork/TonyBinheWu/` 指定此帳號的 `sunnypilot` 儲存庫。
 
-## 扭力與轉向速率
+這是原始碼分支。安裝器會下載程式與子模組，首次啟動沿用 `launch_chffrplus.sh` → `openpilot/system/manager/build.py` 的 SCons 編譯流程；分支沒有 `prebuilt` 標記。首次安裝須保留穩定供電、Wi-Fi 與下載模型及編譯的時間。AGNOS 版本依本基底的 `launch_env.sh` 為 19.7，更新流程沿用基底。
 
-| 車速 | 轉向 CAN 指令絕對值上限 | 每 10 ms 增加／下降上限 |
-| --- | ---: | ---: |
-| ≤ 39.6 km/h（11 m/s） | 384 | 10／10 |
-| 39.6～46.8 km/h（11～13 m/s） | 384 線性降至 350 | 10／10 線性降至 2／3 |
-| 46.8～61.2 km/h（13～17 m/s） | 350 線性降至 270 | 2／3 |
-| ≥ 61.2 km/h（17 m/s） | 270 | 2／3 |
+目前裝有其他版本時，先在停車狀態透過原本的解除安裝流程回到自訂軟體畫面。不要在行駛時安裝或切換分支。
 
-開關關閉時，所有車速維持原本 270 上限與 2／3 速率。這裡的 384、350、270 及 10／10 都是 CAN 指令單位，不是 N·m 或方向盤角速度。
+## 適用車型與設定
 
-11～13 m/s 的速率插值最後會取整數；控制器先將車速向上量化到 0.001 m/s，再使用與 Panda C 程式相同的四捨五入方式，避免 Python 與 safety 在邊界相差 1 個指令單位。
+在裝置的 **Settings → Steering → HKG 低速轉向扭力（實驗功能）** 開啟。英文名稱為 **HKG Low-Speed Steering Torque (Experimental)**。
 
-## 平順與 safety 設計
+- 預設關閉，包括從舊 EV6 版本更新的裝置；更新後需手動開啟。
+- 僅在非行車狀態且已辨識到相容車型時才能調整。首次使用若尚未辨識車型，先啟動車輛完成辨識，再回到非行車狀態設定。
+- 設定在下次啟動行車系統時生效。停車但仍在行車模式時不會即時切換；關閉開關後，下次行車恢復原上限。
+- sunnylink 的 Steering 設定定義也加入同一開關、非行車限制與相容性判斷。
 
-- 11、13、17 m/s 邊界都以連續曲線銜接，不使用舊提交在 11 m/s 的硬切換。
-- 車速上升或功能條件失效時，若現有指令高於新上限，只允許向零方向單調下降；不會因新上限突然變低而拒絕整段降扭力。
-- 快速低速速率生效時，real-time delta 暫時使用 270；回到一般 2／3 速率後，先保留至 RT 參考值追上目前指令，再恢復原本 112，避免邊界產生 safety rejection。
-- 保留駕駛扭力 allowance／multiplier 250／2、steer-request 故障避免、扭力 rate limit 與 real-time limit。
-- 沒有移植 2022 舊提交中低速略過 rate、RT、driver torque 與 steer-request 檢查的做法。
+條件為：已收錄的 HKG CAN-FD 平台、扭力控制、`hyundaiCanfd` Panda 模式，且沒有 `ALT_LIMITS`、`ALT_LIMITS_2` 或 `dashcamOnly` 限制。UI 與車輛初始化共用同一相容性函式。手動寫入設定也不能在不相容車型上啟用。
 
-這些處理能消除本次參數切換本身造成的明顯跳變，但不能保證所有「兵乓」現象消失。模型路徑、橫向控制器調校、EPS 回饋、輪胎與路面也可能造成左右修正，仍需以實車 route 比對確認。
+**傳統 CAN 與角度控制車型不支援此功能。** 傳統 CAN 車型有 170、255、270、384 等不同上限，不能直接套用此曲線。這不會新增未收錄的年式或 EPS 韌體支援，也不保證停車或髮夾彎可以自動完成。
 
-## 適用範圍
+目前符合架構條件的 19 個平台如下；這是程式相容性範圍，不代表每一款車都已完成實車驗證。
 
-只適用於已收錄、採扭力控制的 HKG CAN-FD 平台，且不能帶有 `ALT_LIMITS`、`ALT_LIMITS_2` 或 `dashcamOnly` 限制。傳統 CAN、角度控制與未支援平台即使手動寫入參數，也不會啟用此曲線。
+| 品牌 | 平台識別碼 |
+| --- | --- |
+| Hyundai | `HYUNDAI_IONIQ_5`、`HYUNDAI_IONIQ_6`、`HYUNDAI_KONA_EV_2ND_GEN`、`HYUNDAI_SANTA_CRUZ_1ST_GEN`、`HYUNDAI_STARIA_4TH_GEN`、`HYUNDAI_TUCSON_4TH_GEN` |
+| Kia | `KIA_CARNIVAL_4TH_GEN`、`KIA_EV6`、`KIA_K8_HEV_1ST_GEN`、`KIA_NIRO_EV_2ND_GEN`、`KIA_NIRO_HEV_2ND_GEN`、`KIA_SORENTO_4TH_GEN`、`KIA_SORENTO_HEV_4TH_GEN`、`KIA_SPORTAGE_5TH_GEN` |
+| Genesis | `GENESIS_G80_2ND_GEN_FL`、`GENESIS_GV60_EV_1ST_GEN`、`GENESIS_GV70_1ST_GEN`、`GENESIS_GV70_ELECTRIFIED_1ST_GEN`、`GENESIS_GV80` |
 
-0–5 km/h 自動變換車道的請求條件、煞車等待、盲區／前車／模型有效性檢查仍保留，詳見 [HKG_CREEP_LANE_CHANGE.md](HKG_CREEP_LANE_CHANGE.md)。內部仍使用 `CANFD_CREEP_LANE_CHANGE` 車輛旗標傳遞此能力；這不是另一個使用者開關，也不會啟用 Panda 的舊 400 扭力 safety bit。
+開關啟用時的曲線：
+
+| 車速 | 轉向 CAN 指令絕對值上限 |
+| --- | ---: |
+| ≤ 46.8 km/h（13 m/s） | 350 |
+| 46.8～61.2 km/h（13～17 m/s） | 350 線性降至 270 |
+| ≥ 61.2 km/h（17 m/s） | 270 |
+
+350 相較原 270 增加約 29.6%。這是 CAN 指令數值，不是 Nm，也不能推論實際轉向扭矩或可完成彎道增加相同比例。
+
+保留扭力上升／下降速率 2／3、即時變化限制 112、駕駛扭力 allowance／multiplier 250／2，以及既有約 85° 的 EPS 故障避免邏輯。速度取自 `vEgoRaw`，不依模型版本或飽和狀態切換。開關關閉時，CAN-FD 上限保持原本的 270。
+
+## 整合方式
+
+將 [opendbc PR #3720](https://github.com/commaai/opendbc/pull/3720) 的候選實作移植到主分支原本釘選的 sunnypilot/opendbc 提交 `f95f996f5917dcbbf2e32fe51b606a24cf836af6`，保留 sunnypilot 的 `CarParamsSP`、`CarControlSP`、MADS 與其他既有擴充。
+
+自訂 opendbc 分支為 `TonyBinheWu/opendbc:sunnypilot-ev6-low-speed-torque`。主儲存庫的 `.gitmodules` 指向此 fork，`opendbc_repo` 以固定提交釘選。更新 opendbc 分支本身不會自動改變本分支；必須另行更新子模組提交。
+
+`HkgLowSpeedTorque` 是預設 `false` 的持久化布林設定。`card.py` 透過既有 `initialize_params` → `get_car` → opendbc `setup_interfaces` 流程讀取；在建立 CarController 前，同步設定 `CarParams.flags` 與 Panda 的 `safetyParam`。不在控制迴圈中讀取開關，也不會出現僅更新 Python 上限卻漏掉 Panda 參數的切換方式。
+
+MADS、Chestnut 模型載入與既有裝置編譯流程沿用本分支基底。此功能不需要合併回 `master`；日後合入上游更新時，必須保留開關與 opendbc 的固定提交，並重新驗證 HKG 控制器及 safety 測試。
+
+CarController 計算速度上限，Panda 另由 CAN 輪速取樣獨立計算與檢查。Panda 使用既有輪速取樣最小值，因此加速跨過邊界時，可能短暫保留先前較低的輪速樣本；當取樣最小值達 17 m/s 時，上限為 270。
+
+本基底的 Panda `SConscript` 直接包含已釘選 opendbc 的 safety 原始碼。裝置編譯後，`pandad` 會依韌體簽章比對更新 Panda；不需要手動繞過 Panda 或改刷不相符的韌體。
+
+## 確認與還原
+
+安裝完成後，在軟體資訊頁確認分支為 `hkg-enhanced`。有 SSH 時可在裝置檢查：
+
+```bash
+cd /data/openpilot
+git branch --show-current
+git remote get-url origin
+git submodule status opendbc_repo
+```
+
+預期 origin 為 `https://github.com/TonyBinheWu/sunnypilot.git`，opendbc 提交與 GitHub 本分支的子模組一致。
+
+若只要還原轉向上限，在 Steering 頁關閉開關，於下次行車生效。若要移除此實驗分支，可透過自訂軟體安裝：
+
+```text
+install.sunnypilot.ai/fork/TonyBinheWu/master
+```
 
 ## 驗證範圍
 
-2026-09-08 在主機環境完成：
+本次 HKG 開關整合驗證結果（2026-09-07）：
 
-- HKG CAN-FD safety 全套：3,763 項通過，276 項略過。
-- HKG 低速曲線、控制器與原生 C safety 定向測試：40 項通過。
-- sunnylink 設定、schema 與能力測試：72 項通過，1 項略過；參數／翻譯測試 67 項通過；自動變換車道狀態機測試 39 項通過。
-- 覆蓋四輪速度量化邊界、正負扭力、384→350→270 曲線、10／10→2／3 速率、RT 切換、單調降扭力、舊 creep safety bit 無效與開關隔離。
-- 相關 Python 檔通過 Ruff，opendbc 通過 `git diff --check`。
+- opendbc 的 HKG 初始化、控制器與 CAN-FD safety 測試：3,788 項通過，276 項略過。
+- sunnylink 設定編譯、結構、能力判斷測試：56 項通過；`settings_ui.json` 與 YAML 編譯結果一致。
+- `HkgLowSpeedTorque` 已登錄為預設關閉的持久化布林參數；Steering 頁與繁體中文翻譯已加入。
+- 變更涉及的 Python 程式通過 Ruff；主專案與 opendbc 均通過 `git diff --check`。
 
-尚未完成 comma／Chestnut 裝置端完整編譯、Panda 實機刷寫或任何 HKG 車型實車驗證。首次測試應在封閉、低速、可立即接管的環境進行，並記錄 `vEgoRaw`、`steeringTorque`、`torqueOutputCan`、rate-limited 狀態與期望曲率。
+驗證涵蓋全部 HKG 平台的相容性與重設、符合條件的 CAN-FD 平台經 `get_car` 初始化後產生的 CAN 指令，以及多 Panda 參數、未知平台、角度控制與其他品牌的隔離。速度插值、正規化回饋、駕駛介入、速率與高角度故障避免測試涵蓋 EV6、IONIQ 5 與 GV60。Panda 測試包含多種 CAN-FD 配置、輪速量化、旗標重設，以及 MADS 在 ACC 未啟用時仍遵守同一扭力上限。
+
+350 是待驗證的實驗候選值。軟體測試與韌體編譯不代表已驗證各 HKG 車型 EPS 的物理極限、橫向加速度、jerk 或轉彎效果。此環境沒有連接實車、comma 或 Chestnut 裝置，無法完成裝置上的整套 sunnypilot 編譯、開機、刷寫與行車驗證。安裝成功後仍需在受控場地、可隨時接管的條件下比對修改前後的紀錄，不能把它視為已驗證的道路版本。

@@ -1163,35 +1163,3 @@ msgstr[1] "{} minutes ago"
 msgid "✓ SUBSCRIBED"
 msgstr "✓ SUBSCRIBED"
 
-#: openpilot/selfdrive/ui/widgets/setup.py
-msgid "🔥 Firehose Mode 🔥"
-msgstr "🔥 Firehose Mode 🔥"
-
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Enable Tesla Rainbow Mode"
-msgstr "Enable Tesla Rainbow Mode"
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only."
-msgstr "Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only."
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Tesla Rainbow Mode Style"
-msgstr "Tesla Rainbow Mode Style"
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Blue bars animate with actual vehicle acceleration and deceleration. A model-predicted stop is shown for any cause, including traffic lights or stop signs. The model does not identify light colors or sign types."
-msgstr "Blue bars animate with actual vehicle acceleration and deceleration. A model-predicted stop is shown for any cause, including traffic lights or stop signs. The model does not identify light colors or sign types."
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Rainbow Road"
-msgstr "Rainbow Road"
-
-#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/visuals.py
-msgid "Dynamic Blue Bars"
-msgstr "Dynamic Blue Bars"
-
-#: openpilot/selfdrive/ui/sunnypilot/onroad/blue_path.py
-msgid "Model predicts stop"
-msgstr "Model predicts stop"

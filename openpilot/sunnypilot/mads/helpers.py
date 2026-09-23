@@ -52,6 +52,7 @@ def set_alternative_experience(CP: structs.CarParams, CP_SP: structs.CarParamsSP
     elif steering_mode == MadsSteeringModeOnBrake.PAUSE:
       CP.alternativeExperience |= ALTERNATIVE_EXPERIENCE.MADS_PAUSE_LATERAL_ON_BRAKE
 
+
 def set_car_specific_params(CP: structs.CarParams, CP_SP: structs.CarParamsSP, params: Params):
   if CP.brand == "hyundai":
     # TODO-SP: This should be separated from MADS module for future implementations

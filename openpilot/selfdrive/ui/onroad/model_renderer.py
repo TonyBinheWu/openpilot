@@ -17,9 +17,6 @@ from openpilot.selfdrive.ui.sunnypilot.onroad.model_renderer import ChevronMetri
 CLIP_MARGIN = 500
 MIN_DRAW_DISTANCE = 10.0
 MAX_DRAW_DISTANCE = 100.0
-ADJACENT_LEAD_PROB = 0.55
-ADJACENT_LATERAL_MIN = 1.4
-ADJACENT_LATERAL_MAX = 6.5
 
 THROTTLE_COLORS = [
   rl.Color(13, 248, 122, 102),   # HSLF(148/360, 0.94, 0.51, 0.4)
@@ -59,7 +56,6 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     self._lane_line_probs = np.zeros(4, dtype=np.float32)
     self._road_edge_stds = np.zeros(2, dtype=np.float32)
     self._lead_vehicles = [LeadVehicle(), LeadVehicle()]
-    self._adjacent_objects: list[LeadVehicle] = []
     self._path_offset_z = HEIGHT_INIT[0]
     self._counter = -1
     self._camera_offset = ui_state.params.get("CameraOffset", return_default=True) if ui_state.active_bundle else 0.0
@@ -132,7 +128,6 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
         return
 
       self._update_model(lead_one, path_x_array)
-      self._update_adjacent_objects(model, path_x_array)
       if render_lead_indicator:
         self._update_leads(radar_state, path_x_array)
       self._transform_dirty = False
@@ -140,7 +135,6 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     # Draw elements
     self._draw_lane_lines()
     self._draw_path(sm)
-    self._draw_adjacent_objects()
 
     if render_lead_indicator and radar_state:
       self._draw_lead_indicator()
@@ -175,41 +169,6 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
         point = self._map_to_screen(d_rel, -y_rel + self._camera_offset, z + self._path_offset_z)
         if point:
           self._lead_vehicles[i] = self._update_lead_vehicle(d_rel, v_rel, point, self._rect)
-
-  def _update_adjacent_objects(self, model, path_x_array):
-    """Render best-effort adjacent-lane candidates from the model lead heads.
-
-    leadsV3 contains time-horizon lead hypotheses, not a complete object list.
-    Spatial de-duplication avoids drawing the same physical lead more than once.
-    """
-    self._adjacent_objects = []
-    if not ui_state.adjacent_lane_object_markers or len(path_x_array) == 0:
-      return
-
-    candidates: list[tuple[float, float, float]] = []
-    path_y = self._path.raw_points[:, 1]
-    for lead in list(model.leadsV3)[:2]:
-      if lead.prob < ADJACENT_LEAD_PROB or not lead.x or not lead.y:
-        continue
-      d_rel, model_y = float(lead.x[0]), float(lead.y[0])
-      if not (3.0 <= d_rel <= MAX_DRAW_DISTANCE):
-        continue
-      path_center_y = float(np.interp(d_rel, path_x_array, path_y))
-      lateral_offset = abs(model_y + self._camera_offset - path_center_y)
-      if not (ADJACENT_LATERAL_MIN <= lateral_offset <= ADJACENT_LATERAL_MAX):
-        continue
-      if any(abs(d_rel - x) < 4.0 and abs(model_y - y) < 1.0 for x, y, _ in candidates):
-        continue
-      candidates.append((d_rel, model_y, float(lead.v[0]) if lead.v else 0.0))
-
-    for d_rel, model_y, model_v in candidates:
-      idx = self._get_path_length_idx(path_x_array, d_rel)
-      z = self._path.raw_points[idx, 2] if idx < len(self._path.raw_points) else 0.0
-      point = self._map_to_screen(d_rel, model_y + self._camera_offset, z + self._path_offset_z)
-      if point:
-        marker = self._update_lead_vehicle(d_rel, model_v, point, self._rect)
-        marker.fill_alpha = max(marker.fill_alpha, 180)
-        self._adjacent_objects.append(marker)
 
   def _update_model(self, lead, path_x_array):
     """Update model visualization data based on model message"""
@@ -334,14 +293,8 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     self._blend_filter.update(int(allow_throttle))
 
     if ui_state.rainbow_path and self._lateral_active:
-      if ui_state.rainbow_mode_style == 1:
-        if self.blue_path.draw(self._rect, self._path, sm, ui_state.started_frame, self._map_to_screen, self._path_offset_z):
-          return
-      else:
-        self.blue_path.reset()
-        self.rainbow_path.draw_rainbow_path(self._rect, self._path)
-        return
-    self.blue_path.reset()
+      self.rainbow_path.draw_rainbow_path(self._rect, self._path)
+      return
 
     if self._experimental_mode:
       # Draw with acceleration coloring
@@ -369,13 +322,6 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
 
       rl.draw_triangle_fan(lead.glow, len(lead.glow), rl.Color(218, 202, 37, 255))
       rl.draw_triangle_fan(lead.chevron, len(lead.chevron), rl.Color(201, 34, 49, lead.fill_alpha))
-
-  def _draw_adjacent_objects(self):
-    for marker in self._adjacent_objects:
-      if not marker.glow or not marker.chevron:
-        continue
-      rl.draw_triangle_fan(marker.glow, len(marker.glow), rl.Color(80, 70, 0, 150))
-      rl.draw_triangle_fan(marker.chevron, len(marker.chevron), rl.Color(255, 215, 0, marker.fill_alpha))
 
   @staticmethod
   def _get_path_length_idx(pos_x_array: np.ndarray, path_distance: float) -> int:
