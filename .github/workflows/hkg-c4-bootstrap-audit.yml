@@ -15,8 +15,34 @@ jobs:
         run: |
           GIT_LFS_SKIP_SMUDGE=1 timeout 240 git clone --depth=1 --branch audit/hkg-c4-bootstrap-20260923 https://github.com/TonyBinheWu/sunnypilot.git source
           cd source
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 --version
           git rev-parse HEAD
           cat launch_env.sh
+      - name: Bootstrap fault-injection regression tests
+        run: |
+          cd source
+          python3 -m unittest discover -s tools/tests -p test_hkg_bootstrap.py -v
+          bash -n launch_openpilot.sh launch_chffrplus.sh launch_env.sh
+          python3 -m py_compile tools/hkg_bootstrap.py openpilot/system/manager/build.py
+          git diff --check
+      - name: Confirm only bootstrap files changed and HKG features preserved
+        run: |
+          cd source
+          GIT_LFS_SKIP_SMUDGE=1 git fetch --depth=1 origin 5fac01c9612befe6a8c8107d68208c36d6fccb19
+          python3 -u - <<'PY'
+          import subprocess
+          base='5fac01c9612befe6a8c8107d68208c36d6fccb19'
+          allowed={'tools/hkg_bootstrap.py','tools/tests/test_hkg_bootstrap.py','launch_chffrplus.sh','openpilot/system/manager/build.py','.github/workflows/hkg-c4-bootstrap-audit.yml'}
+          changed=set(subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines())
+          assert changed==allowed,(changed,allowed)
+          for path in ['launch_env.sh','.gitmodules','.lfsconfig','opendbc_repo','panda','tinygrad_repo','teleoprtc_repo','openpilot/cereal/custom.capnp','openpilot/selfdrive/ui/translations/app_zh-CHT.po']:
+            before=subprocess.check_output(['git','rev-parse',base+':'+path],text=True).strip()
+            after=subprocess.check_output(['git','rev-parse','HEAD:'+path],text=True).strip()
+            assert before==after,path
+            print('UNCHANGED',path,before)
+          print('BOOTSTRAP_ONLY_DIFF_OK')
+          PY
       - name: Check MICI installer and AGNOS download endpoints
         run: |
           cd source
@@ -33,42 +59,53 @@ jobs:
               if b'TonyBinheWu' in s or b'hkg-enhanced' in s: print(s.decode())
           manifest=json.load(open('openpilot/system/hardware/comma/agnos.json'))
           def probe(p):
-            try:
-              req=urllib.request.Request(p['url'],headers={'Range':'bytes=0-63'})
-              with urllib.request.urlopen(req,timeout=20) as r:
-                head=r.read(64)
-                return {'partition':p['name'],'status':r.status,'magic':head[:6].hex(),'xz':head.startswith(bytes.fromhex('fd377a585a00'))}
-            except Exception as e:
-              return {'partition':p['name'],'error':str(e)}
+            req=urllib.request.Request(p['url'],headers={'Range':'bytes=0-63'})
+            with urllib.request.urlopen(req,timeout=20) as r:
+              head=r.read(64)
+              assert r.status in (200,206) and head.startswith(bytes.fromhex('fd377a585a00'))
+              return {'partition':p['name'],'status':r.status,'xz':True}
           with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             for result in pool.map(probe,manifest): print('AGNOS_ENDPOINT',json.dumps(result))
           PY
-      - name: Verify and inspect updater Python archive without execution
+      - name: Verify updater Python archive without execution or flashing
         run: |
           cd source
           timeout 180 git lfs pull --include='openpilot/common/hardware/comma/updater'
-          python3 -u - <<'PY'
-          import hashlib, pathlib, zipfile
-          p=pathlib.Path('openpilot/common/hardware/comma/updater')
-          data=p.read_bytes()
-          expected='3a94ab8395f20d20a9d5a2a2bacca0694f072df8421cf13adca6250d28065bdc'
-          assert hashlib.sha256(data).hexdigest()==expected
-          print('UPDATER_HASH_OK',len(data),repr(data[:200]))
-          with zipfile.ZipFile(p) as z:
-            print('ZIP_FILES',len(z.namelist()))
+          python3 tools/hkg_bootstrap.py --directory "$RUNNER_TEMP/checked-updater" check-updater "$PWD"
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('openpilot/common/hardware/comma/updater') as z:
             assert z.testzip() is None
-            names=[n for n in z.namelist() if n in ('__main__.py','environment.json') or n.endswith(('/updater.py','/mici_updater.py','/lib/application.py','/hardware/comma/hardware.py'))]
-            for n in names:
-              content=z.read(n).decode(errors='replace')
-              print('---',n,'---')
-              print(content[:9000])
+            code=z.read('openpilot/system/ui/mici_updater.py').decode()
+            print('UPSTREAM_UPDATER_ARCHIVE_OK',len(z.namelist()))
+            print('MICI_UPDATER_CATCHES_ERRORS', 'print(f"Updater error: {e}")' in code)
           PY
-      - name: Run bootstrap regression tests when present
+      - name: Install pinned raylib for independent screen smoke test
         run: |
           cd source
-          if [ -f tools/tests/test_hkg_bootstrap.py ]; then
-            python3 -m unittest discover -s tools/tests -p test_hkg_bootstrap.py -v
-          fi
-          bash -n launch_openpilot.sh launch_chffrplus.sh launch_env.sh
-          git diff --check
-          echo 'Not a C4 hardware boot or vehicle validation.'
+          python3 - <<'PY'
+          import pathlib,subprocess,sys,tomllib
+          lock=tomllib.loads(pathlib.Path('uv.lock').read_text())
+          pkg=next(p for p in lock['package'] if p['name']=='comma-deps-raylib')
+          subprocess.check_call([sys.executable,'-m','pip','install','comma-deps-raylib=='+pkg['version']])
+          PY
+          command -v xvfb-run || { sudo apt-get update -qq && sudo apt-get install -y xvfb xauth; }
+      - name: Render both diagnostic screen sizes without the openpilot UI stack
+        run: |
+          cd source
+          xvfb-run -a python3 -u - <<'PY'
+          import importlib.util,pathlib,tempfile
+          from unittest.mock import patch
+          spec=importlib.util.spec_from_file_location('bootstrap','tools/hkg_bootstrap.py')
+          b=importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+          original_exists=pathlib.Path.exists
+          with tempfile.TemporaryDirectory() as tmp:
+            journal=b.Journal(tmp)
+            for device in ('mici','tizi'):
+              journal.set('DIAGNOSTIC_TEST','No hardware is connected',device=device,os_version='18.4',required='19.7',commit='test')
+              with patch.object(pathlib.Path,'exists',lambda p: str(p)=='/AGNOS' or original_exists(p)):
+                b.screen(journal,seconds=1)
+              print('SCREEN_SMOKE_OK',device)
+          PY
+      - name: Validation limits
+        run: echo 'No C4 ARM boot, actual AGNOS installation, Panda flashing, or vehicle validation was performed.'
