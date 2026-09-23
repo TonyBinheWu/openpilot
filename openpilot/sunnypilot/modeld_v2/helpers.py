@@ -55,6 +55,13 @@ def _dynamic_factory(real_class):
     return _enum_factory(real_class)
 
   def factory(*args, **kwargs):
+    # Legacy driving model artifacts serialized Buffer.uop_refcount as the
+    # seventh positional argument. Current tinygrad removed that parameter:
+    # without translating it, the integer is interpreted as Buffer.base.
+    if (real_class.__module__ == "tinygrad.device" and real_class.__name__ == "Buffer"
+        and len(args) >= 7 and isinstance(args[6], int)
+        and "uop_refcount" not in inspect.signature(real_class).parameters):
+      args = (*args[:6], *args[7:])
     try:
       return real_class(*args, **kwargs)
     except TypeError:
