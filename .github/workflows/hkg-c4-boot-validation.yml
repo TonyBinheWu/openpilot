@@ -1,0 +1,87 @@
+name: HKG C4 boot validation
+on:
+  push:
+    branches: [fix/hkg-c4-boot-20260923]
+    paths: [.github/workflows/hkg-c4-boot-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+    steps:
+      - name: Fetch immutable candidate without downloading driving models
+        run: |
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth=2 --branch fix/hkg-c4-boot-20260923 https://github.com/TonyBinheWu/sunnypilot.git "$RUNNER_TEMP/hkg"
+          cd "$RUNNER_TEMP/hkg"
+          GIT_LFS_SKIP_SMUDGE=1 git reset --hard c208228d279e966a74e1c2cd05ae59882516db2e
+          git fetch --depth=1 origin 5fac01c9612befe6a8c8107d68208c36d6fccb19
+          test "$(git rev-parse HEAD)" = c208228d279e966a74e1c2cd05ae59882516db2e
+      - name: Verify scope and exact tested file bytes
+        run: |
+          cd "$RUNNER_TEMP/hkg"
+          python3 - <<'PY'
+          import subprocess
+          expected={
+            'launch_openpilot.sh':'170d6d1c97022b84e409439936533e30e7582de8',
+            'launch_chffrplus.sh':'52f13238b3995d774b6eb7be9165ff2e0a87782d',
+            'tools/boot/bootstrap.py':'4e5fb6d7ddc2378188bdf5b6672eab1f4c3a644c',
+            'tools/boot/screen.py':'49ff0538a1285b35bc0f6bb9be43fab48b7e396b',
+            'tools/boot/tests/test_boot.py':'fef75e21235a7655c28df476d74c70efef1d7a0c',
+            'docs/HKG_C4_BOOT_DIAGNOSTICS.md':'1b2ab587e1cdf7a83eac7604f2aa722bba7c1ae4',
+          }
+          changed=set(subprocess.check_output(['git','diff','--name-only','5fac01c9612befe6a8c8107d68208c36d6fccb19','HEAD'],text=True).splitlines())
+          assert changed==set(expected),changed
+          for p,sha in expected.items():
+            actual=subprocess.check_output(['git','hash-object',p],text=True).strip()
+            assert actual==sha,(p,actual)
+          print('SCOPE_OK: exactly six files; HKG, Params, Panda, translations, AGNOS version/manifest unchanged')
+          PY
+          git diff --check 5fac01c9612befe6a8c8107d68208c36d6fccb19 HEAD
+          bash -n launch_openpilot.sh launch_chffrplus.sh launch_env.sh
+      - name: Run failure-injection regression tests (no hardware access)
+        run: |
+          cd "$RUNNER_TEMP/hkg"
+          python3 -m unittest discover -s tools/boot/tests -v
+      - name: Download and audit the real pinned AGNOS updater without executing it
+        run: |
+          cd "$RUNNER_TEMP/hkg"
+          timeout 180 git lfs pull --include='openpilot/common/hardware/comma/updater'
+          python3 tools/boot/bootstrap.py "$PWD" --check-updater "$PWD/openpilot/common/hardware/comma/updater"
+          echo '3a94ab8395f20d20a9d5a2a2bacca0694f072df8421cf13adca6250d28065bdc  openpilot/common/hardware/comma/updater' | sha256sum -c -
+          readelf -h openpilot/common/hardware/comma/updater
+          readelf -l openpilot/common/hardware/comma/updater | grep 'interpreter' || true
+          readelf -d openpilot/common/hardware/comma/updater | grep NEEDED || true
+          echo 'UPDATER_PAYLOAD_OK (not executed or flashed)'
+      - name: Probe live C4 and C3X installer targets
+        run: |
+          python3 - <<'PY'
+          import re,urllib.request,hashlib
+          for device in ('mici','tizi'):
+            req=urllib.request.Request('https://install.sunnypilot.ai/fork/TonyBinheWu/hkg-enhanced',headers={'User-Agent':'AGNOSSetup-19.7','X-openpilot-device-type':device})
+            with urllib.request.urlopen(req,timeout=40) as r:
+              data=r.read(4000000)
+              print('INSTALLER',device,r.status,len(data),hashlib.sha256(data).hexdigest())
+            assert data[:4]==b'\x7fELF'
+            strings=[s.decode() for s in re.findall(rb'[\x20-\x7e]{8,}',data)]
+            assert any('hkg-enhanced' in s for s in strings)
+            assert any('TonyBinheWu/' in s for s in strings)
+            for s in strings:
+              if 'TonyBinheWu/' in s or 'hkg-enhanced?' in s:
+                print('TARGET',s)
+          PY
+          git ls-remote https://github.com/TonyBinheWu/openpilot.git refs/heads/hkg-enhanced
+          git ls-remote https://github.com/TonyBinheWu/sunnypilot.git refs/heads/hkg-enhanced
+      - name: Install host-only display test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libgl1-mesa-dri
+          python3 -m pip install --disable-pip-version-check raylib
+      - name: Real diagnostic display smoke test under Xvfb (not a C4 display)
+        run: |
+          cd "$RUNNER_TEMP/hkg"
+          printf '%s\n' '{"stage":"agnos-update","exit_code":9,"agnos":"TEST-ONLY","required_agnos":"19.7","tail":["Simulated updater failure; no hardware accessed"],"log":"/data/boot-diagnostics/boot.log"}' > "$RUNNER_TEMP/report.json"
+          timeout 30 xvfb-run -a python3 tools/boot/screen.py "$RUNNER_TEMP/report.json" --seconds 2
+          echo 'EMERGENCY_UI_HOST_SMOKE_OK'
