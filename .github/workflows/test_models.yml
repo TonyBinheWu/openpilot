@@ -26,7 +26,12 @@ jobs:
             data = json.loads(urllib.request.urlopen(url).read())
             for bundle in data.get("bundles", []):
               for model in bundle.get("models", []):
-                if "artifact" in model:
+                if "artifact" in model and model["artifact"].get("file_name") in {
+                  "driving_certified_herbalist_v2_february_19_2024_tinygrad.pkl",
+                  "driving_sad_model_august_28_2026_tinygrad.pkl",
+                  "driving_cinque_terre_model_v2_september_08_2026_tinygrad.pkl",
+                  "driving_bmrlnap_model_v6_september_01_2026_tinygrad.pkl",
+                }:
                   artifacts.append(model["artifact"])
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
