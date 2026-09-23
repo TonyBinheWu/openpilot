@@ -1,0 +1,53 @@
+name: tonypilot MICI Git URL audit
+on:
+  push:
+    branches: [audit/tonypilot-install-20260923]
+    paths: [.github/workflows/tonypilot-mici-git-audit.yml]
+permissions:
+  contents: read
+jobs:
+  mici-git:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+      GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+      GIT_HTTP_LOW_SPEED_TIME: '45'
+    steps:
+      - name: Inspect MICI binary branch and actual Git redirects
+        run: |
+          python3 - <<'PY'
+          import re,urllib.request
+          url='https://install.sunnypilot.ai/fork/TonyBinheWu/tonypilot'
+          request=urllib.request.Request(url,headers={'User-Agent':'AGNOSSetup-19.7','X-openpilot-device-type':'mici'})
+          with urllib.request.urlopen(request,timeout=30) as r:
+            data=r.read(3000000)
+          for line in re.findall(rb'[\x20-\x7e]{8,}',data):
+            if b'tonypilot' in line or b'github.com/Tony' in line:
+              print('MICI_EMBEDDED',line.decode())
+          url='https://github.com/TonyBinheWu/openpilot.git/info/refs?service=git-upload-pack'
+          with urllib.request.urlopen(url,timeout=30) as r:
+            data=r.read(2000000)
+            print('GIT_HTTP_STATUS',r.status,'FINAL_GIT_URL',r.url)
+          print('ADVERTISED_TONYPILOT',b'refs/heads/tonypilot' in data)
+          PY
+          git ls-remote https://github.com/TonyBinheWu/openpilot.git refs/heads/tonypilot
+          git ls-remote https://github.com/TonyBinheWu/sunnypilot.git refs/heads/tonypilot
+      - name: Exact clone using the C4 embedded openpilot alias
+        run: |
+          start=$SECONDS
+          timeout 420 git clone --progress https://github.com/TonyBinheWu/openpilot.git -b tonypilot --depth=1 --recurse-submodules "$RUNNER_TEMP/mici-source" >"$RUNNER_TEMP/mici-clone.log" 2>&1
+          echo "MICI_ALIAS_CLONE_EXIT=0 ELAPSED=$((SECONDS-start)) seconds"
+          tr '\r' '\n' <"$RUNNER_TEMP/mici-clone.log" | tail -n 14
+          cd "$RUNNER_TEMP/mici-source"
+          test "$(git rev-parse HEAD)" = 8b5ae576c4a736a9190c2522dd8b8db2b3176cfc
+          git checkout tonypilot
+          git reset --hard origin/tonypilot
+          git submodule update --init
+          git submodule status --recursive
+          git lfs fsck --objects
+          echo 'MICI_GIT_AND_POSTCLONE_OK: This is not a C4 executable/boot test.'
+      - name: Clone error summary
+        if: failure()
+        run: |
+          tr '\r' '\n' <"$RUNNER_TEMP/mici-clone.log" | tail -n 35 || true
