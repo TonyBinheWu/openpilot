@@ -1,0 +1,29 @@
+name: HKG updater format audit
+on:
+  push:
+    branches: [fix/hkg-c4-boot-20260923]
+    paths: [.github/workflows/hkg-updater-format-audit.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Inspect actual updater container and its launch header
+        run: |
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth=1 --branch hkg-enhanced https://github.com/TonyBinheWu/sunnypilot.git "$RUNNER_TEMP/hkg"
+          cd "$RUNNER_TEMP/hkg"
+          timeout 180 git lfs pull --include='openpilot/common/hardware/comma/updater'
+          python3 - <<'PY'
+          import pathlib,hashlib,re,subprocess
+          p=pathlib.Path('openpilot/common/hardware/comma/updater')
+          data=p.read_bytes()
+          print('SIZE',len(data),'SHA256',hashlib.sha256(data).hexdigest())
+          print('MAGIC',data[:64].hex())
+          print('HEADER',data[:12000].decode('utf-8','replace'))
+          print('FILE',subprocess.check_output(['file',str(p)],text=True))
+          for line in re.findall(rb'[\x20-\x7e]{14,}',data):
+            if any(k in line for k in (b'ld-linux',b'GLIBC_',b'aarch64',b'x86_64',b'PYTHON',b'python3',b'_MEI',b'GLFW',b'pyray',b'wayland',b'AGNOS')):
+              print('STRING',line[:300].decode())
+          PY
