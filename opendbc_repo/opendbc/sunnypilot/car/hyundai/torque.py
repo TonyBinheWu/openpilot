@@ -6,10 +6,17 @@ from opendbc.car.structs import CarParams
 
 def supports_low_speed_torque(CP: CarParams | None) -> bool:
   """Return whether the detected vehicle is eligible for the HKG dynamic torque profile."""
-  return bool(CP is not None and CP.brand == "hyundai" and CP.carFingerprint in CANFD_CAR and
+  if CP is None:
+    return False
+
+  torque_steering = CP.steerControlType == CarParams.SteerControlType.torque or str(CP.steerControlType) == "torque"
+  canfd_safety = bool(CP.safetyConfigs) and (
+    CP.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiCanfd or
+    str(CP.safetyConfigs[-1].safetyModel) == "hyundaiCanfd"
+  )
+  return bool(CP.brand == "hyundai" and CP.carFingerprint in CANFD_CAR and
               CP.flags & HyundaiFlags.CANFD and not CP.flags & (HyundaiFlags.ALT_LIMITS | HyundaiFlags.ALT_LIMITS_2) and
-              CP.steerControlType == CarParams.SteerControlType.torque and not CP.dashcamOnly and
-              CP.safetyConfigs and CP.safetyConfigs[-1].safetyModel == CarParams.SafetyModel.hyundaiCanfd)
+              torque_steering and not CP.dashcamOnly and canfd_safety)
 
 
 def configure_low_speed_torque(CP: CarParams, enabled: bool) -> None:
