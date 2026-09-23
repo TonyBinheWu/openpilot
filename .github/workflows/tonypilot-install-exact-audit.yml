@@ -1,0 +1,105 @@
+name: tonypilot exact installer audit
+on:
+  push:
+    branches: [audit/tonypilot-install-20260923]
+    paths: [.github/workflows/tonypilot-install-exact-audit.yml]
+permissions:
+  contents: read
+jobs:
+  exact-install-paths:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+      GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+      GIT_HTTP_LOW_SPEED_TIME: '45'
+    steps:
+      - name: Exact normal fresh clone with automatic LFS
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/tonypilot-exact"
+          cd "$RUNNER_TEMP/tonypilot-exact"
+          start=$SECONDS
+          set +e
+          timeout 600 git clone --progress https://github.com/TonyBinheWu/sunnypilot.git -b tonypilot --depth=1 --recurse-submodules source >fresh.log 2>&1
+          rc=$?
+          echo "EXACT_FRESH_EXIT=$rc ELAPSED=$((SECONDS-start)) seconds"
+          printf '%s\n' "$rc" > fresh.status
+          tr '\r' '\n' <fresh.log | tail -n 24
+          exit 0
+      - name: Installer post-clone commands and integrity checks
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-exact/source"
+          test "$(git rev-parse HEAD)" = 8b5ae576c4a736a9190c2522dd8b8db2b3176cfc
+          git checkout tonypilot
+          git reset --hard origin/tonypilot
+          git submodule update --init
+          git submodule status --recursive
+          git lfs fsck --objects
+          python3 - <<'PY'
+          import json, pathlib, subprocess
+          files=json.loads(subprocess.check_output(['git','lfs','ls-files','--json']).decode())['files']
+          print('LFS_OBJECT_COUNT',len(files))
+          print('LFS_TOTAL_BYTES',sum(x.get('size',0) for x in files))
+          for x in sorted(files,key=lambda v:v.get('size',0),reverse=True)[:8]:
+            print('LARGEST',x.get('size'),x.get('name'))
+          pointers=[]
+          for x in files:
+            p=pathlib.Path(x['name'])
+            if not p.exists():
+              pointers.append(str(p))
+              continue
+            with p.open('rb') as f:
+              if f.read(80).startswith(b'version https://git-lfs.github.com/spec/v1'):
+                pointers.append(str(p))
+          print('UNRESOLVED_LFS_POINTERS',pointers)
+          assert not pointers
+          PY
+          test -x launch_openpilot.sh
+          test -x launch_chffrplus.sh
+          test -x openpilot/system/manager/build.py
+          git status --short
+          printf '0\n' > ../postclone.status
+      - name: Reproduce official release cache then fetch tonypilot
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-exact"
+          start=$SECONDS
+          set +e
+          GIT_LFS_SKIP_SMUDGE=1 timeout 300 git clone --depth=1 --branch release-mici https://github.com/sunnypilot/sunnypilot.git cached >cache.log 2>&1
+          rc=$?
+          echo "RELEASE_CACHE_CLONE_EXIT=$rc ELAPSED=$((SECONDS-start)) seconds"
+          if [ "$rc" -ne 0 ]; then
+            tr '\r' '\n' <cache.log | tail -n 20
+            exit 0
+          fi
+          cd cached
+          git remote set-url origin https://github.com/TonyBinheWu/sunnypilot.git
+          git remote set-branches --add origin tonypilot
+          timeout 180 git fetch --progress origin tonypilot >>../cache.log 2>&1
+          fetch_rc=$?
+          echo "CACHED_FETCH_EXIT=$fetch_rc"
+          timeout 180 git checkout tonypilot >>../cache.log 2>&1
+          checkout_rc=$?
+          echo "CACHED_CHECKOUT_EXIT=$checkout_rc"
+          timeout 180 git reset --hard origin/tonypilot >>../cache.log 2>&1
+          reset_rc=$?
+          echo "CACHED_RESET_EXIT=$reset_rc"
+          timeout 180 git submodule update --init >>../cache.log 2>&1
+          modules_rc=$?
+          echo "CACHED_SUBMODULE_EXIT=$modules_rc"
+          printf '%s %s %s %s\n' "$fetch_rc" "$checkout_rc" "$reset_rc" "$modules_rc" > ../cache.status
+          tr '\r' '\n' <../cache.log | tail -n 35
+          git rev-parse HEAD
+          git status --short | head -n 30
+          exit 0
+      - name: Results
+        if: always()
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-exact"
+          for file in *.status; do [ ! -f "$file" ] || echo "$file=$(cat "$file")"; done
+          echo 'No C4 ARM binaries, boot, CAN, or vehicle controls were executed.'
+          echo '--- download and checkout errors ---'
+          grep -iE 'fatal:|error:|not our ref|smudge|denied|timed out|cannot|failed' fresh.log cache.log | tail -n 30 || true
