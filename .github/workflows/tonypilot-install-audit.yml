@@ -1,0 +1,131 @@
+name: tonypilot install audit
+on:
+  push:
+    branches: [audit/tonypilot-install-20260923]
+    paths: [.github/workflows/tonypilot-install-audit.yml]
+permissions:
+  contents: read
+jobs:
+  clean-install-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+      GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+      GIT_HTTP_LOW_SPEED_TIME: '45'
+    steps:
+      - name: Inspect live installer payload without executing it
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/tonypilot-audit"
+          cd "$RUNNER_TEMP/tonypilot-audit"
+          python3 - <<'PY' | tee installer-probe.log
+          import hashlib, re, urllib.request, urllib.error
+          probes = [
+            ('tonypilot-c4', 'https://install.sunnypilot.ai/fork/TonyBinheWu/tonypilot', 'AGNOSSetup-19.7'),
+            ('upstream-mici', 'https://install.sunnypilot.ai/release-mici', 'AGNOSSetup-19.7'),
+          ]
+          for name, url, agent in probes:
+            print('\nPROBE', name, url, agent, flush=True)
+            try:
+              req = urllib.request.Request(url, headers={'User-Agent': agent})
+              with urllib.request.urlopen(req, timeout=45) as response:
+                data = response.read(20 * 1024 * 1024 + 1)
+                print('RESPONSE', response.status, response.url, response.headers.get('Content-Type'), flush=True)
+              print('SIZE', len(data), 'MAGIC', data[:4].hex(), 'SHA256', hashlib.sha256(data).hexdigest(), flush=True)
+              assert len(data) <= 20 * 1024 * 1024, 'installer larger than probe limit'
+              lines = re.findall(rb'[\x20-\x7e]{8,}', data)
+              for line in lines:
+                if any(key in line.lower() for key in (b'github.com/', b'git clone', b'git submodule', b'tonypilot', b'release-mici', b'continue.sh', b'git lfs', b'git reset', b'agnos')):
+                  print('STRING', line.decode()[:1000], flush=True)
+              if data[:4] != b'\x7fELF':
+                print('NON_ELF_PREVIEW', data[:1200].decode(errors='replace'), flush=True)
+            except Exception as error:
+              print('PROBE_ERROR', type(error).__name__, str(error), flush=True)
+          PY
+      - name: Fresh recursive source checkout without LFS smudge
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-audit"
+          git --version
+          git lfs version
+          set +e
+          GIT_LFS_SKIP_SMUDGE=1 timeout 420 git clone --progress --depth=1 --recurse-submodules --branch tonypilot https://github.com/TonyBinheWu/sunnypilot.git source >clone.log 2>&1
+          rc=$?
+          printf '%s\n' "$rc" > clone.status
+          echo "CLONE_EXIT=$rc"
+          tail -n 100 clone.log
+          if [ -d source/.git ]; then
+            cd source
+            git rev-parse HEAD
+            git remote get-url origin
+            git submodule status --recursive
+            git ls-files -s launch_openpilot.sh launch_chffrplus.sh launch_env.sh openpilot/system/manager/build.py openpilot/system/manager/manager.py
+            cat .lfsconfig
+          fi
+          exit 0
+      - name: Check pinned tree and Python source syntax
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-audit/source"
+          expected=8b5ae576c4a736a9190c2522dd8b8db2b3176cfc
+          actual=$(git rev-parse HEAD)
+          test "$actual" = "$expected" || { echo "Target moved: $actual"; exit 1; }
+          bash -n launch_openpilot.sh launch_chffrplus.sh launch_env.sh
+          python3 - <<'PY' | tee ../syntax.log
+          import ast, pathlib, sys
+          errors=[]
+          count=0
+          for root in ('openpilot', 'opendbc_repo/opendbc'):
+            for path in pathlib.Path(root).rglob('*.py'):
+              try:
+                ast.parse(path.read_bytes(), filename=str(path))
+                count += 1
+              except (SyntaxError, ValueError) as error:
+                errors.append((str(path), str(error)))
+          print('PYTHON',sys.version)
+          print('PARSED',count,'ERRORS',len(errors))
+          for path,error in errors:
+            print(path,error)
+          sys.exit(bool(errors))
+          PY
+      - name: Test LFS objects used before the build screen
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-audit/source"
+          set +e
+          timeout 240 git -c lfs.dialtimeout=20 -c lfs.tlstimeout=20 -c lfs.activitytimeout=45 -c lfs.transfer.maxretries=1 lfs pull --include='openpilot/common/hardware/comma/updater,openpilot/selfdrive/assets/fonts/*,openpilot/system/ui/assets/*' >../lfs-bootstrap.log 2>&1
+          rc=$?
+          printf '%s\n' "$rc" > ../lfs-bootstrap.status
+          echo "LFS_BOOTSTRAP_EXIT=$rc"
+          tail -n 100 ../lfs-bootstrap.log
+          git lfs logs last 2>/dev/null | tail -n 100
+          exit 0
+      - name: Test all current-tree LFS downloads
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-audit/source"
+          set +e
+          timeout 360 git -c lfs.dialtimeout=20 -c lfs.tlstimeout=20 -c lfs.activitytimeout=45 -c lfs.transfer.maxretries=1 lfs pull >../lfs-current-tree.log 2>&1
+          rc=$?
+          printf '%s\n' "$rc" > ../lfs-current-tree.status
+          echo "LFS_CURRENT_TREE_EXIT=$rc"
+          tail -n 100 ../lfs-current-tree.log
+          git lfs logs last 2>/dev/null | tail -n 100
+          git lfs ls-files -s > ../lfs-inventory.log
+          head -n 20 ../lfs-inventory.log
+          git status --short
+          exit 0
+      - name: Download audit summary
+        if: always()
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/tonypilot-audit"
+          echo 'Install audit status (not a C4 build or road test)'
+          for f in *.status; do [ ! -f "$f" ] || { echo "$f=$(cat "$f")"; }; done
+          echo '--- installer target strings ---'
+          grep -E 'PROBE|RESPONSE|SIZE|STRING|ERROR' installer-probe.log || true
+          echo '--- source errors ---'
+          grep -iE 'fatal:|error:|not our ref|not found|timed out|failed|quota|bandwidth|denied|smudge' clone.log lfs-*.log | tail -n 80 || true
+          echo '--- syntax ---'
+          cat syntax.log 2>/dev/null || true
