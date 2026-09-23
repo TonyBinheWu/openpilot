@@ -4,7 +4,7 @@
 
 此功能由 `ev6-low-speed-torque` 分支恢復至 `hkg-enhanced`，供 Hyundai／Kia／Genesis（HKG）CAN-FD 車型使用。
 
-opendbc 固定至 `TonyBinheWu/opendbc@95d1576b16222d83eecdabcd0fb81753e68f1737`，讓 Python 控制器與 Panda safety 使用同一組動態曲線與啟用旗標。
+opendbc 固定至 `TonyBinheWu/opendbc@a4c49e28e42d367bb26d490ffdbbb88334c38979`，讓 Python 控制器與 Panda safety 使用同一組動態曲線與啟用旗標。
 
 ## 安裝
 
@@ -30,6 +30,8 @@ install.sunnypilot.ai/fork/TonyBinheWu/hkg-enhanced
 - 僅在非行車狀態且已辨識到相容車型時才能調整。首次使用若尚未辨識車型，先啟動車輛完成辨識，再回到非行車狀態設定。
 - 設定在下次啟動行車系統時生效。停車但仍在行車模式時不會即時切換；關閉開關後，下次行車恢復原上限。
 - sunnylink 的 Steering 設定定義也加入同一開關、非行車限制與相容性判斷。
+
+變換車道頁另有獨立的 `HkgCreepLaneChange` 開關；它只在 0–5 km/h 的單次自動變換車道期間提供 400→原上限的動態區間，詳細條件見 [HKG_CREEP_LANE_CHANGE.md](HKG_CREEP_LANE_CHANGE.md)。
 
 條件為：已收錄的 HKG CAN-FD 平台、扭力控制、`hyundaiCanfd` Panda 模式，且沒有 `ALT_LIMITS`、`ALT_LIMITS_2` 或 `dashcamOnly` 限制。UI 與車輛初始化共用同一相容性函式。手動寫入設定也不能在不相容車型上啟用。
 
@@ -90,7 +92,7 @@ install.sunnypilot.ai/fork/TonyBinheWu/master
 
 ## 驗證範圍
 
-本次 HKG 開關整合驗證結果（2026-09-07）：
+原 HKG 低速扭力開關整合的基準驗證結果（2026-09-07）：
 
 - opendbc 的 HKG 初始化、控制器與 CAN-FD safety 測試：3,788 項通過，276 項略過。
 - sunnylink 設定編譯、結構、能力判斷測試：56 項通過；`settings_ui.json` 與 YAML 編譯結果一致。
@@ -99,4 +101,6 @@ install.sunnypilot.ai/fork/TonyBinheWu/master
 
 驗證涵蓋全部 HKG 平台的相容性與重設、符合條件的 CAN-FD 平台經 `get_car` 初始化後產生的 CAN 指令，以及多 Panda 參數、未知平台、角度控制與其他品牌的隔離。速度插值、正規化回饋、駕駛介入、速率與高角度故障避免測試涵蓋 EV6、IONIQ 5 與 GV60。Panda 測試包含多種 CAN-FD 配置、輪速量化、旗標重設，以及 MADS 在 ACC 未啟用時仍遵守同一扭力上限。
 
-350 是待驗證的實驗候選值。軟體測試與韌體編譯不代表已驗證各 HKG 車型 EPS 的物理極限、橫向加速度、jerk 或轉彎效果。此環境沒有連接實車、comma 或 Chestnut 裝置，無法完成裝置上的整套 sunnypilot 編譯、開機、刷寫與行車驗證。安裝成功後仍需在受控場地、可隨時接管的條件下比對修改前後的紀錄，不能把它視為已驗證的道路版本。
+新增超低速變換車道的程式另外加入狀態機、設定隔離、控制器曲線、實體方向燈、煞車、逾時與降扭力測試；本環境完成 Python 語法、設定編譯及隔離狀態機模擬，未重跑上列完整基準套件。
+
+350 與超低速動作中的 400 都是待實車驗證的實驗候選值。軟體測試與韌體編譯不代表已驗證各 HKG 車型 EPS 的物理極限、橫向加速度、jerk 或轉彎效果。此環境沒有連接實車、comma 或 Chestnut 裝置，無法完成裝置上的整套 sunnypilot 編譯、開機、刷寫與行車驗證。安裝成功後仍需在受控場地、可隨時接管的條件下比對修改前後的紀錄，不能把它視為已驗證的道路版本。

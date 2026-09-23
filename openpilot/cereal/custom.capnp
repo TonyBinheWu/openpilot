@@ -383,6 +383,7 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadOne @2 :LeadData;
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
+  creepLaneChangeActive @5 :Bool;
 
   struct Param {
     key @0 :Text;
@@ -462,6 +463,7 @@ struct ModelDataV2SP @0xa1680744031fdb2d {
   laneTurnDirection @0 :TurnDirection;
   leftLaneChangeEdgeBlock @1 :Bool;
   rightLaneChangeEdgeBlock @2 :Bool;
+  creepLaneChangeActive @3 :Bool;
 
   enum TurnDirection {
     none @0;

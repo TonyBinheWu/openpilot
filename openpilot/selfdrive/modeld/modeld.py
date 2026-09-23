@@ -13,6 +13,7 @@ import numpy as np
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal import log
 from opendbc.car.structs import car
+from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.cereal.messaging import PubMaster, SubMaster
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.cereal.visionipc import VisionStreamType
@@ -36,6 +37,7 @@ from openpilot.selfdrive.modeld.constants import ModelConstants, Plan
 from openpilot.selfdrive.modeld.helpers import chestnut_present, chestnut_compiled, chestnut_ready, modeld_pkl_path, load_oob
 
 from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
+from openpilot.sunnypilot.navd.model_desire import NavigationDesireController
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.selfdrive.controls.lib.relc import RoadEdgeLaneChangeController
 
@@ -320,7 +322,8 @@ def main(demo=False):
   # messaging
   pub_socks = ["modelV2", "drivingModelData", "cameraOdometry", "modelDataV2SP"] + (["chestnutState"] if CHESTNUT else [])
   pm = PubMaster(pub_socks)
-  sm = SubMaster(["deviceState", "carState", "narrowRoadCameraState", "extrinsicsCalibration", "driverMonitoringState", "carControl", "lateralDelay"])
+  sm = SubMaster(["deviceState", "carState", "narrowRoadCameraState", "extrinsicsCalibration", "driverMonitoringState", "carControl", "lateralDelay",
+                  "navInstruction"])
 
   publish_state = PublishState()
   params = Params()
@@ -350,7 +353,8 @@ def main(demo=False):
   long_delay = CP.longitudinalActuatorDelay + LONG_SMOOTH_SECONDS
   prev_action = log.ModelDataV2.Action()
 
-  DH = DesireHelper()
+  DH = DesireHelper(bool(CP.brand == "hyundai" and CP.flags & HyundaiFlags.CANFD_CREEP_LANE_CHANGE))
+  NDC = NavigationDesireController(params)
   RELC = RoadEdgeLaneChangeController()
 
   while True:
@@ -387,7 +391,10 @@ def main(demo=False):
       meta_extra = meta_main
 
     sm.update(0)
-    desire = DH.desire
+    manual_desire = DH.desire
+    nav_desire = NDC.update(sm["navInstruction"], sm["carState"], max(sm["carState"].vEgo, 0.),
+                            sm.alive["navInstruction"], sm.valid["navInstruction"])
+    desire = manual_desire if manual_desire != log.Desire.none else nav_desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["narrowRoadCameraState"].frameId
     v_ego = max(sm["carState"].vEgo, 0.)
@@ -471,10 +478,16 @@ def main(demo=False):
       lane_change_prob = l_lane_change_prob + r_lane_change_prob
       mdv2sp_send = messaging.new_message('modelDataV2SP')
       left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
-      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
+      lead = modelv2_send.modelV2.leadsV3[0]
+      lead_distance = float(lead.x[0]) if len(lead.x) else float("nan")
+      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge,
+                modelv2_send.valid, float(lead.prob), lead_distance)
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
+      mdv2sp_send.modelDataV2SP.creepLaneChangeActive = \
+        DH.creep_lane_change and DH.lane_change_state == log.LaneChangeState.laneChangeStarting
+      mdv2sp_send.valid = modelv2_send.valid
 
       fill_driving_model_data(drivingdata_send, modelv2_send)
       fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)

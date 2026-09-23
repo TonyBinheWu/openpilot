@@ -6,6 +6,7 @@ See the LICENSE.md file in the root directory for more details.
 """
 from collections.abc import Callable
 import pyray as rl
+from opendbc.sunnypilot.car.hyundai.torque import supports_low_speed_torque
 
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.system.ui.lib.multilang import tr
@@ -57,15 +58,40 @@ class LaneChangeSettingsLayout(Widget):
       description=lambda: tr("Blocks the lane change if the model sees a road edge on your signaled side."),
     )
 
+    self._hkg_creep_lane_change = toggle_item_sp(
+      param="HkgCreepLaneChange",
+      title=lambda: tr("HKG Creep Lane Change (Experimental)"),
+      description=self._hkg_creep_lane_change_description,
+    )
+
     items = [
       self._lane_change_timer,
       LineSeparatorSP(40),
       self._bsm_delay,
       LineSeparatorSP(40),
       self._road_edge_block,
+      LineSeparatorSP(40),
+      self._hkg_creep_lane_change,
     ]
 
     return items
+
+  @staticmethod
+  def _hkg_creep_lane_change_description():
+    description = tr("At 0-5 km/h, one blinker request starts one automatic lane change after 0.5 seconds. " +
+                     "The model must be valid; if a lead is detected, it must be at least 5 m away. " +
+                     "It waits while the brake is held; braking after steering starts, a vehicle in the signaled blind spot, " +
+                     "signal cancellation, or invalid perception cancels the maneuver. " +
+                     "Only an already active maneuver may use a steering command cap of 400 up to 21 km/h, " +
+                     "tapering to the normal limit between 21 and 30 km/h. " +
+                     "The driver remains responsible for checking the target lane and clearance. Takes effect next drive.")
+    if ui_state.CP is None:
+      status = tr("Start the vehicle to check vehicle compatibility.")
+    elif not supports_low_speed_torque(ui_state.CP):
+      status = tr("Unavailable for this vehicle. Requires compatible HKG CAN-FD torque steering.")
+    else:
+      status = tr("Compatible HKG CAN-FD vehicle detected.")
+    return f"<b>{status}</b><br><br>{description}"
 
   def _update_state(self):
     super()._update_state()
@@ -86,3 +112,4 @@ class LaneChangeSettingsLayout(Widget):
     if not enable_bsm and ui_state.params.get_bool("AutoLaneChangeBsmDelay"):
       ui_state.params.remove("AutoLaneChangeBsmDelay")
     self._bsm_delay.action_item.set_enabled(enable_bsm and ui_state.params.get("AutoLaneChangeTimer", return_default=True) > AutoLaneChangeMode.NUDGE)
+    self._hkg_creep_lane_change.action_item.set_enabled(ui_state.is_offroad() and supports_low_speed_torque(ui_state.CP))

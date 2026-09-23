@@ -4,11 +4,14 @@ Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
+from types import SimpleNamespace
+
 from openpilot.common.parameterized import parameterized
 from openpilot.common.realtime import DT_MDL
-from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper, LaneChangeState, LaneChangeDirection
+from openpilot.selfdrive.controls.lib.desire_helper import CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE, CREEP_LANE_CHANGE_SPEED_MAX, \
+  DesireHelper, LaneChangeState, LaneChangeDirection, creep_lane_change_context_safe
 from openpilot.sunnypilot.selfdrive.controls.lib.auto_lane_change import AutoLaneChangeController, AutoLaneChangeMode, \
-  AUTO_LANE_CHANGE_TIMER, ONE_SECOND_DELAY
+  AUTO_LANE_CHANGE_TIMER, CREEP_LANE_CHANGE_DELAY, ONE_SECOND_DELAY
 from openpilot.common.test import OpenpilotTestCase
 
 AUTO_LANE_CHANGE_TIMER_COMBOS = [
@@ -210,3 +213,91 @@ class TestAutoLaneChangeController(OpenpilotTestCase):
 
     # Lane change should never be allowed
     assert not self.alc.auto_lane_change_allowed
+
+
+class TestHkgCreepLaneChange(OpenpilotTestCase):
+  @staticmethod
+  def car_state(speed=0., left=True, right=False, brake=False, left_bsm=False, right_bsm=False):
+    return SimpleNamespace(vEgo=speed, vEgoRaw=speed, leftBlinker=left, rightBlinker=right,
+                           brakePressed=brake, leftBlindspot=left_bsm, rightBlindspot=right_bsm,
+                           steeringPressed=False, steeringTorque=0.)
+
+  @staticmethod
+  def start_creep(DH, CS, lead_prob=0.9, lead_distance=CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE):
+    DH.update(CS, True, 1.0, model_valid=True, lead_prob=lead_prob, lead_distance=lead_distance)
+    assert DH.lane_change_state == LaneChangeState.preLaneChange
+    for _ in range(int(CREEP_LANE_CHANGE_DELAY / DT_MDL) + 2):
+      DH.update(CS, True, 1.0, model_valid=True, lead_prob=lead_prob, lead_distance=lead_distance)
+      if DH.lane_change_state == LaneChangeState.laneChangeStarting:
+        break
+    assert DH.lane_change_state == LaneChangeState.laneChangeStarting
+    assert DH.creep_lane_change
+
+  def test_model_and_lead_clearance_gate(self):
+    assert not creep_lane_change_context_safe(False, 0., 100.)
+    assert creep_lane_change_context_safe(True, 0.49, float("nan"))
+    assert not creep_lane_change_context_safe(True, 0.5, CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE - 0.01)
+    assert creep_lane_change_context_safe(True, 0.5, CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE)
+
+  def test_disabled_or_out_of_range_never_starts(self):
+    for enabled, speed in ((False, 0.), (True, CREEP_LANE_CHANGE_SPEED_MAX + 0.01)):
+      with self.subTest(enabled=enabled, speed=speed):
+        DH = DesireHelper(enabled)
+        DH.update(self.car_state(speed), True, 1.0, model_valid=True, lead_prob=0., lead_distance=float("nan"))
+        assert DH.lane_change_state == LaneChangeState.off
+        assert not DH.creep_lane_change
+
+  def test_no_lead_or_five_metre_lead_starts_once(self):
+    for lead_prob, lead_distance in ((0.1, float("nan")), (0.9, CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE)):
+      with self.subTest(lead_prob=lead_prob, lead_distance=lead_distance):
+        DH = DesireHelper(True)
+        CS = self.car_state(CREEP_LANE_CHANGE_SPEED_MAX)
+        self.start_creep(DH, CS, lead_prob, lead_distance)
+
+        for _ in range(int(0.6 / DT_MDL)):
+          DH.update(CS, True, 0., model_valid=True, lead_prob=lead_prob, lead_distance=lead_distance)
+        assert DH.lane_change_state == LaneChangeState.off
+        assert not DH.creep_lane_change
+
+        # A held signal cannot authorize a second maneuver.
+        DH.update(CS, True, 1.0, model_valid=True, lead_prob=lead_prob, lead_distance=lead_distance)
+        assert DH.lane_change_state == LaneChangeState.off
+
+  def test_signal_while_braking_waits_for_release(self):
+    DH = DesireHelper(True)
+    CS = self.car_state(0., brake=True)
+    DH.update(CS, True, 1.0, model_valid=True, lead_prob=0., lead_distance=float("nan"))
+    for _ in range(int(1.0 / DT_MDL)):
+      DH.update(CS, True, 1.0, model_valid=True, lead_prob=0., lead_distance=float("nan"))
+    assert DH.lane_change_state == LaneChangeState.preLaneChange
+
+    CS = self.car_state(0., brake=False)
+    self.start_creep_after_pre_lane_change(DH, CS, 0., float("nan"))
+
+  @staticmethod
+  def start_creep_after_pre_lane_change(DH, CS, lead_prob, lead_distance):
+    for _ in range(int(CREEP_LANE_CHANGE_DELAY / DT_MDL) + 2):
+      DH.update(CS, True, 1.0, model_valid=True, lead_prob=lead_prob, lead_distance=lead_distance)
+      if DH.lane_change_state == LaneChangeState.laneChangeStarting:
+        break
+    assert DH.lane_change_state == LaneChangeState.laneChangeStarting
+
+  def test_unsafe_input_cancels_request(self):
+    cases = (
+      {"model_valid": False},
+      {"lead_prob": 0.9, "lead_distance": CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE - 0.01},
+      {"brake": True},
+      {"left_bsm": True},
+      {"left": False},
+    )
+    for case in cases:
+      with self.subTest(case=case):
+        DH = DesireHelper(True)
+        CS = self.car_state(0.)
+        self.start_creep(DH, CS)
+        CS = self.car_state(0., left=case.get("left", True), brake=case.get("brake", False),
+                            left_bsm=case.get("left_bsm", False))
+        DH.update(CS, True, 1.0, model_valid=case.get("model_valid", True), lead_prob=case.get("lead_prob", 0.9),
+                  lead_distance=case.get("lead_distance", CREEP_LANE_CHANGE_MIN_LEAD_DISTANCE))
+        assert DH.lane_change_state == LaneChangeState.off
+        assert not DH.creep_lane_change
