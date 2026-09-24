@@ -12,11 +12,14 @@ import errno
 import gzip
 import json
 import os
+import subprocess
 import ssl
 import threading
 import time
 
 from functools import partial
+from pathlib import Path
+from openpilot.common.basedir import BASEDIR
 from openpilot.system.athena.rpc import dispatcher
 from openpilot.common.params import Params, ParamKeyType
 from openpilot.common.realtime import set_core_affinity
@@ -54,6 +57,10 @@ BLOCKED_PARAMS = {
   "HasAcceptedTerms",
   "HasAcceptedTermsSP",
   "OnroadCycleRequested",      # Prevent remote cycle trigger
+  "DoReboot",                  # Reboot only through the guarded update action
+  "IsOffroad",                 # Device-owned safety state
+  "UpdateAvailable", "UpdaterState", "UpdaterTargetBranch",
+  "GitBranch", "SunnylinkUpdateRequestStatus",
   "ParamsVersion",         # Device-managed version counter
 }
 
@@ -233,12 +240,105 @@ def getParams(params_keys: list[str], compression: bool = False) -> str | dict[s
     raise
 
 
+REMOTE_UPDATE_ACTIONS = {"SunnylinkUpdateNow", "SunnylinkInstallUpdate"}
+REMOTE_INSTALL_LOCK = threading.Lock()
+REMOTE_INSTALL_ARMED_UNTIL = 0.0
+
+
+def _remote_update_request(key: str, encoded_value: str, compression: bool) -> None:
+  """Handle one-shot sunnylink commands without trusting dashboard enablement rules."""
+  global REMOTE_INSTALL_ARMED_UNTIL
+  # Clear the toggle even on failure so a new press can be sent after conditions change.
+  params.put_bool(key, False, block=True)
+
+  try:
+    raw = base64.b64decode(encoded_value, validate=True)
+    value = (gzip.decompress(raw) if compression else raw).decode("utf-8").strip().lower()
+    if value not in ("0", "1", "false", "true"):
+      raise ValueError("invalid update request")
+    if value in ("0", "false"):
+      return
+
+    if not sunnylink_ready(params) or not params.get_bool("IsOffroad"):
+      raise RuntimeError("device must be connected to sunnylink and offroad")
+    if params.get_bool("DisableUpdates"):
+      raise RuntimeError("updates are disabled; enable updates and reboot first")
+
+    branch = params.get("GitBranch") or ""
+    target = params.get("UpdaterTargetBranch") or branch
+    if not branch or branch != target:
+      raise RuntimeError("target branch differs from the installed branch")
+
+    if params.get("UpdaterState") != "idle":
+      raise RuntimeError("updater is unavailable or busy")
+
+    if key == "SunnylinkUpdateNow":
+      with REMOTE_INSTALL_LOCK:
+        REMOTE_INSTALL_ARMED_UNTIL = 0.0
+      # The normal updater checks the configured origin, stages submodules and
+      # AGNOS when necessary, and reports status via the existing updater params.
+      result = subprocess.run(["pkill", "-SIGHUP", "-f", "openpilot.system.updated.updated"],
+                              capture_output=True, timeout=5, check=False)
+      if result.returncode != 0:
+        raise RuntimeError("updater process is not running")
+      params.put("SunnylinkUpdateRequestStatus", "download requested", block=True)
+      return
+
+    # Installing a staged update reboots the device. Verify both fresh device
+    # telemetry and the updater's on-disk completion marker before doing so.
+    if not params.get_bool("UpdateAvailable"):
+      raise RuntimeError("no downloaded update is ready")
+    sm = messaging.SubMaster(["deviceState", "pandaStates"], poll="deviceState")
+    sm.update(1000)
+    if not sm.all_checks(["deviceState", "pandaStates"]) or sm["deviceState"].started or any(
+      ps.ignitionLine or ps.ignitionCan for ps in sm["pandaStates"]
+    ):
+      raise RuntimeError("vehicle must be off with fresh device telemetry")
+
+    finalized = Path(os.getenv("UPDATER_STAGING_ROOT", "/data/safe_staging")) / "finalized"
+    if not (finalized / ".overlay_consistent").is_file():
+      raise RuntimeError("staged update is incomplete")
+    def git_value(directory: Path, *args: str) -> str:
+      return subprocess.run(["git", "-C", str(directory), *args], check=True, capture_output=True,
+                            text=True, timeout=5).stdout.strip()
+
+    if git_value(finalized, "rev-parse", "--abbrev-ref", "HEAD") != branch or (
+      git_value(finalized, "rev-parse", "HEAD") == git_value(Path(BASEDIR), "rev-parse", "HEAD")
+    ):
+      raise RuntimeError("staged update does not match the installed branch")
+
+    # Recheck the manager-owned state immediately before requesting reboot.
+    if not params.get_bool("IsOffroad"):
+      raise RuntimeError("device entered onroad mode")
+    # Sunnylink settings may be queued while offline. A single stale toggle must
+    # never reboot the device after it reconnects. Require two distinct writes.
+    with REMOTE_INSTALL_LOCK:
+      now = time.monotonic()
+      if now >= REMOTE_INSTALL_ARMED_UNTIL:
+        REMOTE_INSTALL_ARMED_UNTIL = now + 60
+        params.put("SunnylinkUpdateRequestStatus", "armed: request install again within 60 seconds", block=True)
+        return
+      REMOTE_INSTALL_ARMED_UNTIL = 0.0
+
+    params.put("SunnylinkUpdateRequestStatus", "installing; reboot requested", block=True)
+    params.put_bool("DoReboot", True, block=True)
+  except Exception as e:
+    if key == "SunnylinkInstallUpdate":
+      with REMOTE_INSTALL_LOCK:
+        REMOTE_INSTALL_ARMED_UNTIL = 0.0
+    params.put("SunnylinkUpdateRequestStatus", f"failed: {e}", block=True)
+    raise
+
+
 @dispatcher.add_method
 def saveParams(params_to_update: dict[str, str], compression: bool = False) -> None:
   for key, value in params_to_update.items():
     # disallow modifications to blocked parameters
     if key in BLOCKED_PARAMS:
       cloudlog.warning(f"sunnylinkd.saveParams.blocked: Attempted to modify blocked parameter '{key}'")
+      continue
+    if key in REMOTE_UPDATE_ACTIONS:
+      _remote_update_request(key, value, compression)
       continue
 
     try:

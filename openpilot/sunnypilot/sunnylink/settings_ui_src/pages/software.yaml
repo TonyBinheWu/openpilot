@@ -17,4 +17,39 @@ sections:
     description: When enabled, software updates will be off. This requires a reboot to take effect.
     enablement:
     - $ref: '#/macros/offroad'
-    - $ref: '#/macros/advanced_only'
+  - key: SunnylinkUpdateNow
+    widget: toggle
+    title: Check and Download Update
+    description: One-time request to check and download the latest commit of the installed branch. The switch resets after the request.
+    enablement:
+    - $ref: '#/macros/offroad'
+    - type: param
+      key: DisableUpdates
+      equals: false
+  - key: SunnylinkInstallUpdate
+    widget: toggle
+    title: Install Downloaded Update
+    description: Request once to arm for 60 seconds, then request again to confirm reboot and installation. Requires a staged update, offroad device, and ignition off. Refresh between requests if the switch still appears on.
+    enablement:
+    - $ref: '#/macros/offroad'
+    - type: param
+      key: UpdateAvailable
+      equals: true
+    - type: param
+      key: DisableUpdates
+      equals: false
+  - key: UpdaterState
+    widget: info
+    title: Update Progress
+  - key: SunnylinkUpdateRequestStatus
+    widget: info
+    title: Remote Update Request
+  - key: UpdaterCurrentDescription
+    widget: info
+    title: Installed Version
+  - key: UpdaterNewDescription
+    widget: info
+    title: Downloaded Version
+  - key: LastUpdateException
+    widget: info
+    title: Last Update Error
