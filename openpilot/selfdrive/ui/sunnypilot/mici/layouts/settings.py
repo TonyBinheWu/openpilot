@@ -38,6 +38,7 @@ class LanguageLayoutMici(NavScroller):
     self._buttons = {}
     for name, code in multilang.languages.items():
       button = BigButton(name)
+      button._label.set_font_weight(FontWeight.UNIFONT)
       button.set_click_callback(lambda selected=code: self._select_language(selected))
       self._scroller.add_widget(button)
       self._buttons[code] = button
