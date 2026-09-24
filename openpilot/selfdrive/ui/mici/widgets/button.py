@@ -6,8 +6,8 @@ from collections.abc import Callable
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.scroller import DO_ZOOM
-from openpilot.system.ui.lib.application import gui_app, FontWeight
-from openpilot.system.ui.lib.multilang import tr, MousePos, TextAlignmentVertical
+from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos, TextAlignmentVertical
+from openpilot.system.ui.lib.multilang import tr
 from openpilot.common.filter_simple import BounceFilter
 
 if TYPE_CHECKING:
