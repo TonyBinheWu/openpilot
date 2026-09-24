@@ -39,10 +39,14 @@ class VisualsLayout(Widget):
         tr("Display steering arc on the driving screen when lateral control is enabled."),
         None,
       ),
+      "PredictedStopMarker": (
+        lambda: tr("Model Predicted Stop Position"),
+        tr("Draw a line at the model-predicted stopping position. Display only; it does not affect braking or longitudinal control."),
+        None,
+      ),
       "RainbowMode": (
         lambda: tr("Enable Tesla Rainbow Mode"),
-        tr("A beautiful rainbow effect on the path the model wants to take. " +
-           "It does not affect driving in any way."),
+        tr("Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only."),
         None,
       ),
       "StandstillTimer": (
@@ -121,7 +125,19 @@ class VisualsLayout(Widget):
       inline=False
     )
 
-    items = list(self._toggles.values()) + [
+    self._rainbow_style = multiple_button_item_sp(
+      title=lambda: tr("Tesla Rainbow Mode Style"),
+      description=lambda: tr("Blue bars animate with actual vehicle acceleration and deceleration. " +
+                             "A model-predicted stop is shown for any cause, including traffic lights or stop signs. " +
+                             "The model does not identify light colors or sign types."),
+      buttons=[lambda: tr("Rainbow Road"), lambda: tr("Dynamic Blue Bars")],
+      param="RainbowModeStyle",
+      button_width=450,
+      inline=False,
+    )
+    items = list(self._toggles.values())
+    items.insert(list(self._toggles).index("RainbowMode") + 1, self._rainbow_style)
+    items += [
       self._chevron_info,
       self._dev_ui_info,
     ]
@@ -132,6 +148,9 @@ class VisualsLayout(Widget):
 
     for param in self._toggle_defs:
       self._toggles[param].action_item.set_state(self._params.get_bool(param))
+
+    self._rainbow_style.action_item.set_selected_button(1 if self._params.get("RainbowModeStyle", return_default=True) == 1 else 0)
+    self._rainbow_style.action_item.set_enabled(self._params.get_bool("RainbowMode"))
 
     self._dev_ui_info.action_item.set_selected_button(ui_state.params.get("DevUIInfo", return_default=True))
 

@@ -1181,3 +1181,333 @@ msgstr ""
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/steering.py
 msgid "Unavailable for this vehicle. Requires compatible HKG CAN-FD torque steering."
 msgstr ""
+
+msgid "toggles"
+msgstr ""
+
+msgid "network"
+msgstr ""
+
+msgid "device"
+msgstr ""
+
+msgid "software"
+msgstr ""
+
+msgid "developer"
+msgstr ""
+
+msgid "firehose"
+msgstr ""
+
+msgid "models"
+msgstr ""
+
+msgid "visuals"
+msgstr ""
+
+msgid "language"
+msgstr ""
+
+msgid "Selected"
+msgstr ""
+
+msgid "Tesla Rainbow Mode"
+msgstr ""
+
+msgid "Tesla Rainbow Mode Style"
+msgstr ""
+
+msgid "Model Predicted Stop Position"
+msgstr ""
+
+msgid "Rainbow Road"
+msgstr ""
+
+msgid "Dynamic Blue Bars"
+msgstr ""
+
+msgid "Draw a line at the model-predicted stopping position. Display only; it does not affect braking or longitudinal control."
+msgstr ""
+
+msgid "subscribed"
+msgstr ""
+
+msgid "upgrade to prime"
+msgstr ""
+
+msgid "device ID"
+msgstr ""
+
+msgid "serial"
+msgstr ""
+
+msgid "reset calibration"
+msgstr ""
+
+msgid "reboot"
+msgstr ""
+
+msgid "power off"
+msgstr ""
+
+msgid "regulatory info"
+msgstr ""
+
+msgid "driver\ncamera preview"
+msgstr ""
+
+msgid "review\ntraining guide"
+msgstr ""
+
+msgid "terms &\nconditions"
+msgstr ""
+
+msgid "experimental mode"
+msgstr ""
+
+msgid "use metric units"
+msgstr ""
+
+msgid "lane departure warnings"
+msgstr ""
+
+msgid "always-on driver monitor"
+msgstr ""
+
+msgid "record & upload cabin camera"
+msgstr ""
+
+msgid "record & upload mic audio"
+msgstr ""
+
+msgid "enable sunnypilot"
+msgstr ""
+
+msgid "driving personality"
+msgstr ""
+
+msgid "aggressive"
+msgstr ""
+
+msgid "standard"
+msgstr ""
+
+msgid "relaxed"
+msgstr ""
+
+msgid "version"
+msgstr ""
+
+msgid "branch"
+msgstr ""
+
+msgid "check for update"
+msgstr ""
+
+msgid "updater failed\nto respond"
+msgstr ""
+
+msgid "failed to update"
+msgstr ""
+
+msgid "download update"
+msgstr ""
+
+msgid "up to date"
+msgstr ""
+
+msgid "install now"
+msgstr ""
+
+msgid "enable tethering"
+msgstr ""
+
+msgid "tethering password"
+msgstr ""
+
+msgid "network usage"
+msgstr ""
+
+msgid "enable roaming"
+msgstr ""
+
+msgid "apn settings"
+msgstr ""
+
+msgid "cellular metered"
+msgstr ""
+
+msgid "edit"
+msgstr ""
+
+msgid "forgetting..."
+msgstr ""
+
+msgid "starting..."
+msgstr ""
+
+msgid "connecting..."
+msgstr ""
+
+msgid "tethering"
+msgstr ""
+
+msgid "connected"
+msgstr ""
+
+msgid "not in range"
+msgstr ""
+
+msgid "unsupported"
+msgstr ""
+
+msgid "wrong password"
+msgstr ""
+
+msgid "connect"
+msgstr ""
+
+msgid "SSH keys"
+msgstr ""
+
+msgid "Not set"
+msgstr ""
+
+msgid "Loading..."
+msgstr ""
+
+msgid "joystick debug mode"
+msgstr ""
+
+msgid "longitudinal maneuver mode"
+msgstr ""
+
+msgid "lateral maneuver mode"
+msgstr ""
+
+msgid "alpha longitudinal"
+msgstr ""
+
+msgid "ui debug mode"
+msgstr ""
+
+msgid "start the car to\nuse sunnypilot"
+msgstr ""
+
+msgid "system booting"
+msgstr ""
+
+msgid "openpilot can't start\ncheck alerts"
+msgstr ""
+
+msgid "select model"
+msgstr ""
+
+msgid "cancel download"
+msgstr ""
+
+msgid "Enable Tesla Rainbow Mode"
+msgstr ""
+
+msgid "Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only."
+msgstr ""
+
+msgid "Blue bars animate with actual vehicle acceleration and deceleration. A model-predicted stop is shown for any cause, including traffic lights or stop signs. The model does not identify light colors or sign types."
+msgstr ""
+
+msgid "Model predicts stop"
+msgstr ""
+
+msgid "driver monitoring\ncheck"
+msgstr ""
+
+msgid "Next, we'll check if comma four can detect the driver properly."
+msgstr ""
+
+msgid "sunnypilot uses the cabin camera to check if the driver is distracted."
+msgstr ""
+
+msgid "If it does not have a clear view of the driver, unplug and remount before continuing."
+msgstr ""
+
+msgid "looking for driver"
+msgstr ""
+
+msgid "make sure comma\nfour can see your face"
+msgstr ""
+
+msgid "Remount if your face is blocked, or driver monitoring has difficulty tracking your face."
+msgstr ""
+
+msgid "driver camera data"
+msgstr ""
+
+msgid "do you want to share video data for training?"
+msgstr ""
+
+msgid "Sharing your data with comma helps improve openpilot and sunnypilot for everyone."
+msgstr ""
+
+msgid "what is sunnypilot?"
+msgstr ""
+
+msgid "1. sunnypilot is a driver assistance system."
+msgstr ""
+
+msgid "2. You must pay attention at all times."
+msgstr ""
+
+msgid "3. You must be ready to take over at any time."
+msgstr ""
+
+msgid "4. You are fully responsible for driving the car."
+msgstr ""
+
+msgid "terms of\nservice"
+msgstr ""
+
+msgid "You must accept the Terms of Service to use sunnypilot."
+msgstr ""
+
+msgid "swipe for QR code"
+msgstr ""
+
+msgid "or go to https://sunnypilot.ai/terms"
+msgstr ""
+
+msgid "start"
+msgstr ""
+
+msgid "caution: installing\n3rd party software"
+msgstr ""
+
+msgid "swipe down to go back"
+msgstr ""
+
+msgid "• It has not been tested by comma."
+msgstr ""
+
+msgid "• It may not comply with safety standards."
+msgstr ""
+
+msgid "• It may damage your device and/or vehicle."
+msgstr ""
+
+msgid "how to restore to a\nfactory state later"
+msgstr ""
+
+msgid "connect to\ninternet"
+msgstr ""
+
+msgid "swipe down to go\nback and try again"
+msgstr ""
+
+msgid "wi-fi"
+msgstr ""
+
+msgid "no alerts"
+msgstr ""
+
+msgid "pair with comma connect"
+msgstr ""

@@ -1581,7 +1581,36 @@
               "key": "RainbowMode",
               "widget": "toggle",
               "title": "Tesla Rainbow Mode",
-              "description": "Display a rainbow effect on the path the model wants to take. It does not affect driving in any way."
+              "description": "Choose the original rainbow path or dynamic blue acceleration and deceleration bars below. Display only."
+            },
+            {
+              "key": "RainbowModeStyle",
+              "widget": "option",
+              "title": "Tesla Rainbow Mode Style",
+              "description": "Blue bars animate with actual vehicle acceleration and deceleration. A model-predicted stop is shown for any cause, including traffic lights or stop signs. The model does not identify light colors or sign types.",
+              "options": [
+                {
+                  "value": 0,
+                  "label": "Rainbow Road"
+                },
+                {
+                  "value": 1,
+                  "label": "Dynamic Blue Bars"
+                }
+              ],
+              "enablement": [
+                {
+                  "type": "param",
+                  "key": "RainbowMode",
+                  "equals": true
+                }
+              ]
+            },
+            {
+              "key": "PredictedStopMarker",
+              "widget": "toggle",
+              "title": "Model Predicted Stop Position",
+              "description": "Draw the model-predicted stopping position. Display only; it does not affect braking or longitudinal control."
             }
           ]
         }

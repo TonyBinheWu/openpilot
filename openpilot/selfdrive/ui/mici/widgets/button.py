@@ -6,7 +6,8 @@ from collections.abc import Callable
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.label import UnifiedLabel
 from openpilot.system.ui.widgets.scroller import DO_ZOOM
-from openpilot.system.ui.lib.application import gui_app, FontWeight, MousePos, TextAlignmentVertical
+from openpilot.system.ui.lib.application import gui_app, FontWeight
+from openpilot.system.ui.lib.multilang import tr, MousePos, TextAlignmentVertical
 from openpilot.common.filter_simple import BounceFilter
 
 if TYPE_CHECKING:
@@ -124,10 +125,10 @@ class BigButton(Widget):
 
     self._rotate_icon_t: float | None = None
 
-    self._label = UnifiedLabel(text, font_size=self._get_label_font_size(), font_weight=FontWeight.BOLD,
+    self._label = UnifiedLabel(tr(text), font_size=self._get_label_font_size(), font_weight=FontWeight.BOLD,
                                text_color=LABEL_COLOR, alignment_vertical=TextAlignmentVertical.BOTTOM, scroll=scroll,
                                line_height=0.9)
-    self._sub_label = UnifiedLabel(value, font_size=COMPLICATION_SIZE, font_weight=FontWeight.ROMAN,
+    self._sub_label = UnifiedLabel(tr(value), font_size=COMPLICATION_SIZE, font_weight=FontWeight.ROMAN,
                                    text_color=COMPLICATION_GREY, alignment_vertical=TextAlignmentVertical.BOTTOM)
     self._update_label_layout()
 
@@ -159,7 +160,7 @@ class BigButton(Widget):
     return int(self._rect.width - self.LABEL_HORIZONTAL_PADDING * 2)
 
   def _get_label_font_size(self):
-    if len(self.text) <= 18:
+    if len(tr(self.text)) <= 18:
       return 48
     else:
       return 42
@@ -173,13 +174,22 @@ class BigButton(Widget):
 
   def set_text(self, text: str):
     self.text = text
-    self._label.set_text(text)
+    self._label.set_text(tr(text))
     self._update_label_layout()
 
   def set_value(self, value: str):
     self.value = value
-    self._sub_label.set_text(value)
+    self._sub_label.set_text(tr(value))
     self._update_label_layout()
+
+  def _update_state(self):
+    super()._update_state()
+    label, value = tr(self.text), tr(self.value)
+    if self._label._text != label:
+      self._label.set_text(label)
+      self._update_label_layout()
+    if self._sub_label._text != value:
+      self._sub_label.set_text(value)
 
   def get_value(self) -> str:
     return self.value

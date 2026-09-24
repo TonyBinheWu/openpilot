@@ -135,6 +135,10 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     # Draw elements
     self._draw_lane_lines()
     self._draw_path(sm)
+    if ui_state.status in (UIStatus.ENGAGED, UIStatus.LAT_ONLY):
+      self.predicted_stop_marker.render(self._rect, self._path, sm, self._map_to_screen, self._path_offset_z)
+    else:
+      self.predicted_stop_marker.reset()
 
     if render_lead_indicator and radar_state:
       self._draw_lead_indicator()
@@ -293,8 +297,14 @@ class ModelRenderer(Widget, ChevronMetrics, ModelRendererSP):
     self._blend_filter.update(int(allow_throttle))
 
     if ui_state.rainbow_path and self._lateral_active:
-      self.rainbow_path.draw_rainbow_path(self._rect, self._path)
-      return
+      if ui_state.rainbow_mode_style == 1:
+        if self.blue_path.draw(self._rect, self._path, sm, ui_state.started_frame, self._map_to_screen, self._path_offset_z):
+          return
+      else:
+        self.blue_path.reset()
+        self.rainbow_path.draw_rainbow_path(self._rect, self._path)
+        return
+    self.blue_path.reset()
 
     if self._experimental_mode:
       # Draw with acceleration coloring
