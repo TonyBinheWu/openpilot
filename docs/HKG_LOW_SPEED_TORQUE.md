@@ -4,7 +4,7 @@
 
 此功能由 `ev6-low-speed-torque` 分支恢復至 `hkg-enhanced`，供 Hyundai／Kia／Genesis（HKG）CAN-FD 車型使用。
 
-opendbc 固定至 `TonyBinheWu/opendbc@95d1576b16222d83eecdabcd0fb81753e68f1737`，讓 Python 控制器與 Panda safety 使用同一組動態曲線與啟用旗標。
+opendbc 固定至 `TonyBinheWu/opendbc@5d3c7a8f456b12cbeda46ba08e6ca9c5c85a0c16`，讓 Python 控制器與 Panda safety 使用同一組動態扭力與轉向速率曲線及啟用旗標。
 
 ## 安裝
 
@@ -53,13 +53,21 @@ install.sunnypilot.ai/fork/TonyBinheWu/hkg-enhanced
 
 409 相較原 270 增加約 51.5%。這是 CAN 指令數值，不是 Nm，也不能推論實際轉向扭矩或可完成彎道增加相同比例。
 
-保留扭力上升／下降速率 2／3、即時變化限制 112、駕駛扭力 allowance／multiplier 250／2，以及既有約 85° 的 EPS 故障避免邏輯。速度取自 `vEgoRaw`，不依模型版本或飽和狀態切換。開關關閉時，CAN-FD 上限保持原本的 270。
+開關啟用時的轉向扭力上升／下降速率：
+
+| 車速 | 上升速率 | 下降速率 |
+| --- | ---: | ---: |
+| ≤ 46.8 km/h（13 m/s） | 4 | 6 |
+| 46.8～61.2 km/h（13～17 m/s） | 4 線性降至 2 | 6 線性降至 3 |
+| ≥ 61.2 km/h（17 m/s） | 2 | 3 |
+
+Controller 依 `vEgoRaw` 計算速率，Panda safety 依 CAN 輪速獨立計算並採相同曲線。因 CAN 指令速率為整數，13～17 m/s 的線性插值會以整數階梯呈現；Controller 在速率取整邊界採保守的較高速 bin，避免因 Float32 與 CAN 輪速量化差異而送出 Panda 不接受的指令。為容納低速 4／6 rate，Panda 在必要的低速／過渡 realtime 視窗使用 162 的 `max_rt_delta`，回到一般速率後恢復 112。駕駛扭力 allowance／multiplier 仍為 250／2，並保留既有約 85° 的 EPS 故障避免邏輯。開關關閉時仍維持 CAN-FD 原本 270 上限與 2／3 速率。
 
 ## 整合方式
 
 將 [opendbc PR #3720](https://github.com/commaai/opendbc/pull/3720) 的候選實作移植到主分支原本釘選的 sunnypilot/opendbc 提交 `f95f996f5917dcbbf2e32fe51b606a24cf836af6`，保留 sunnypilot 的 `CarParamsSP`、`CarControlSP`、MADS 與其他既有擴充。
 
-自訂 opendbc 分支為 `TonyBinheWu/opendbc:sunnypilot-ev6-low-speed-torque`。主儲存庫的 `.gitmodules` 指向此 fork，`opendbc_repo` 以固定提交釘選。更新 opendbc 分支本身不會自動改變本分支；必須另行更新子模組提交。
+本次 4／6 速率實作來源分支為 `TonyBinheWu/opendbc:hkg-steering-rates-4-6`。主儲存庫的 `.gitmodules` 指向此 fork，`opendbc_repo` 以固定提交釘選。更新 opendbc 分支本身不會自動改變本分支；必須另行更新子模組提交。
 
 `HkgLowSpeedTorque` 是預設 `false` 的持久化布林設定。`card.py` 透過既有 `initialize_params` → `get_car` → opendbc `setup_interfaces` 流程讀取；在建立 CarController 前，同步設定 `CarParams.flags` 與 Panda 的 `safetyParam`。不在控制迴圈中讀取開關，也不會出現僅更新 Python 上限卻漏掉 Panda 參數的切換方式。
 
@@ -90,12 +98,12 @@ install.sunnypilot.ai/fork/TonyBinheWu/master
 
 ## 驗證範圍
 
-本次 HKG 開關整合驗證結果（2026-09-07）：
+本次 HKG 開關整合驗證結果（更新至 2026-09-25）：
 
-- 原始 350 上限版本：opendbc 的 HKG 初始化、控制器與 CAN-FD safety 測試 3,788 項通過，276 項略過。409 上限版本須重新執行完整測試與實機驗證，不能沿用該次結果。
-- sunnylink 設定編譯、結構、能力判斷測試：56 項通過；`settings_ui.json` 與 YAML 編譯結果一致。
-- `HkgLowSpeedTorque` 已登錄為預設關閉的持久化布林參數；Steering 頁與繁體中文翻譯已加入。
-- 變更涉及的 Python 程式通過 Ruff；主專案與 opendbc 均通過 `git diff --check`。
+- 409 上限＋4／6 動態速率版本的 opendbc GitHub Actions 已通過 safety、safety mutation、Linux／macOS `./test.sh` 與 car-model 測試矩陣。
+- 新增 Controller 與 Panda safety 的 4／6→2／3 邊界、速率過渡、開關關閉回復、driver torque、realtime limit 與 CAN 輪速量化測試。
+- sunnylink 設定編譯、結構、能力判斷沿用既有 `HkgLowSpeedTorque` 開關；`settings_ui.json` 與 YAML 定義不需新增第二個開關。
+- `HkgLowSpeedTorque` 仍為預設關閉的持久化布林參數；Steering 頁與繁體中文翻譯維持既有設定。
 
 驗證涵蓋全部 HKG 平台的相容性與重設、符合條件的 CAN-FD 平台經 `get_car` 初始化後產生的 CAN 指令，以及多 Panda 參數、未知平台、角度控制與其他品牌的隔離。速度插值、正規化回饋、駕駛介入、速率與高角度故障避免測試涵蓋 EV6、IONIQ 5 與 GV60。Panda 測試包含多種 CAN-FD 配置、輪速量化、旗標重設，以及 MADS 在 ACC 未啟用時仍遵守同一扭力上限。
 
